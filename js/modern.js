@@ -318,16 +318,26 @@ class Modern {
         addEventListener('pointermove', move); addEventListener('pointerup', up);
         return;
       }
-      // dokunmatik: dokun = seç (seçiliyse düzenle), basılı tut = menü, kaydırma = sayfa kayar
-      const x0 = e.clientX, y0 = e.clientY; let gone = false;
-      const lp = setTimeout(() => { gone = true; if (!this.inSel(at)) { this.msel = { si, a: at, b: { ...at } }; this.paintSel(); } navigator.vibrate && navigator.vibrate(15); this.selMenu({ clientX: x0, clientY: y0 }); }, 550);
-      const move = ev => { if (Math.abs(ev.clientX - x0) > 8 || Math.abs(ev.clientY - y0) > 8) { gone = true; clearTimeout(lp); end(); } };
-      const up = () => { clearTimeout(lp); end(); if (gone) return; const g = this.selRect(); const wasOnly = g && g.r1 === g.r2 && g.c1 === g.c2 && g.r1 === at.ri && g.c1 === at.ci; if (wasOnly) this.editAt(at); else { this.msel = { si, a: at, b: { ...at } }; this.paintSel(); } };
-      const end = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', end); };
+      // dokunmatik: dokun = seç (seçiliyse düzenle); basılı tut + kaydır = alan seç; basılı tutup bırak = menü; hızlı kaydırma = sayfa kayar
+      this._touchAt = Date.now();
+      const x0 = e.clientX, y0 = e.clientY; let gone = false, held = false, moved = false;
+      const lp = setTimeout(() => { held = true; this._tdrag = true; if (!this.inSel(at)) { this.msel = { si, a: at, b: { ...at } }; this.paintSel(); } navigator.vibrate && navigator.vibrate(15); }, 380);
+      const move = ev => {
+        if (held) { const c = this.cellAt(ev.clientX, ev.clientY); if (c && (!moved || c.ri !== this.msel.b.ri || c.ci !== this.msel.b.ci)) { if (!moved) this.msel = { si, a: at, b: { ...at } }; moved = true; this.msel.b = { ri: c.ri, ci: c.ci }; this.paintSel(); } this.autoScroll(ev.clientY, ev.clientX); return; }
+        if (Math.abs(ev.clientX - x0) > 8 || Math.abs(ev.clientY - y0) > 8) { gone = true; clearTimeout(lp); end(); }
+      };
+      const up = () => {
+        clearTimeout(lp); end();
+        if (held) { if (!moved) this.selMenu({ clientX: x0, clientY: y0 }); return; }
+        if (gone) return; const g = this.selRect(); const wasOnly = g && g.r1 === g.r2 && g.c1 === g.c2 && g.r1 === at.ri && g.c1 === at.ci; if (wasOnly) this.editAt(at); else { this.msel = { si, a: at, b: { ...at } }; this.paintSel(); }
+      };
+      const end = () => { this._tdrag = false; removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', end); };
       addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', end);
     });
+    // basılı tutarak seçerken sayfa kaymasın
+    tb.addEventListener('touchmove', e => { if (this._tdrag) e.preventDefault(); }, { passive: false });
     tb.addEventListener('dblclick', e => { const td = e.target.closest('td[data-ri]'); if (td) this.editAt({ ri: +td.dataset.ri, ci: +td.dataset.ci }); });
-    tb.addEventListener('contextmenu', e => { const td = e.target.closest('td[data-ri]'); if (!td) return; e.preventDefault(); const at = { ri: +td.dataset.ri, ci: +td.dataset.ci }; if (!this.inSel(at)) { this.msel = { si, a: at, b: { ...at } }; this.paintSel(); } this.selMenu(e); });
+    tb.addEventListener('contextmenu', e => { const td = e.target.closest('td[data-ri]'); if (!td) return; e.preventDefault(); if (this._touchAt && Date.now() - this._touchAt < 1500) return; const at = { ri: +td.dataset.ri, ci: +td.dataset.ci }; if (!this.inSel(at)) { this.msel = { si, a: at, b: { ...at } }; this.paintSel(); } this.selMenu(e); });
   }
   inSel(at) { const g = this.selRect(); return !!g && at.ri >= g.r1 && at.ri <= g.r2 && at.ci >= g.c1 && at.ci <= g.c2; }
   editAt(at, text) { const td = this.body.querySelector(`.m-t td[data-ri="${at.ri}"][data-ci="${at.ci}"]`); if (td) this.editCell(td, this._vT, this._vr[at.ri], this._vc[at.ci], text); }

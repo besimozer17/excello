@@ -258,6 +258,7 @@ html.dark .m-step b { color: #04210f; }
 .m-t tbody td { position: relative; touch-action: pan-x pan-y; -webkit-user-select: none; user-select: none; }
 .m-t td.sel { background: color-mix(in srgb, var(--accent) 13%, var(--surface)) !important; box-shadow: inset 0 calc(var(--st, 0) * 2px) 0 var(--accent), inset 0 calc(var(--sb, 0) * -2px) 0 var(--accent), inset calc(var(--sl, 0) * 2px) 0 0 var(--accent), inset calc(var(--sr, 0) * -2px) 0 0 var(--accent); }
 .m-t td.sel-a { background: var(--surface) !important; }
+.m-handle::before { content: ''; position: absolute; inset: -14px; }
 .m-handle { position: absolute; right: 1px; bottom: 1px; width: 12px; height: 12px; border-radius: 99px; background: var(--accent); border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--accent); cursor: crosshair; touch-action: none; z-index: 2; }
 .m-handle::after { content: ''; position: absolute; inset: -14px; }
 @media (pointer: coarse) { .m-handle { width: 18px; height: 18px; } }
@@ -269,3 +270,5 @@ html.dark .m-step b { color: #04210f; }
 .m-sb-btn { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; color: inherit; flex: none; }
 .m-sb-btn:hover { background: rgba(127,127,127,.25); }
 @media (max-width: 600px) { #m-selbar .m-sb-x { display: none; } #m-selbar { gap: 10px; } }
+
+@media (pointer: coarse) { .m-handle { width: 18px; height: 18px; right: -2px; bottom: -2px; } .m-t tbody td { -webkit-touch-callout: none; } }
