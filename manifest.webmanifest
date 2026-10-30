@@ -1,0 +1,19 @@
+{
+  "name": "Excello — Tablo",
+  "short_name": "Excello",
+  "description": "İnternetsiz çalışan, formül yazdırmayan tablo uygulaması",
+  "lang": "tr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#16a34a",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "file_handlers": [
+    { "action": "./index.html", "accept": { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"], "application/vnd.ms-excel": [".xls", ".xlt"], "application/vnd.openxmlformats-officedocument.spreadsheetml.template": [".xltx"], "text/csv": [".csv"] } }
+  ]
+}
