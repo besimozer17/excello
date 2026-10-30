@@ -77,7 +77,7 @@ async function open(file) {
   } else wb = await readSheetJS(buf, ext);
   wb.name = name.replace(/\.[^.]+$/, '');
   wb.format = ['xlsx', 'xlsm', 'xltx', 'xls', 'xlt', 'ods', 'csv'].includes(ext) ? ext : (ext === 'xltm' ? 'xlsm' : 'xlsx');
-  wb.recalc(); wb.undoS = []; wb.redoS = []; wb.dirty = false;
+  wb.trimEmpty(); wb.recalc(); wb.undoS = []; wb.redoS = []; wb.dirty = false;
   return wb;
 }
 

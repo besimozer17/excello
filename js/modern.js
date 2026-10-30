@@ -12,7 +12,8 @@ const DB = {
   db: null,
   open() { if (this.db) return Promise.resolve(this.db); return new Promise((res, rej) => { let r; try { r = indexedDB.open('excello', 1); } catch (e) { return rej(e); } r.onupgradeneeded = () => r.result.createObjectStore('docs', { keyPath: 'id' }); r.onsuccess = () => res(this.db = r.result); r.onerror = () => rej(r.error); }); },
   async tx(mode, fn) { const work = (async () => { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction('docs', mode); const st = t.objectStore('docs'); const rq = fn(st); t.oncomplete = () => res(rq && rq.result); t.onerror = () => rej(t.error); }); })(); return Promise.race([work, new Promise((_, rej) => setTimeout(() => rej(new Error('zaman aşımı')), 3000))]); },
-  put(d) { return this.tx('readwrite', s => s.put(d)).catch(e => { try { localStorage.setItem('excello.doc.' + d.id, JSON.stringify(d)); } catch (e2) { throw e; } }); },
+  // yedek yol (localStorage) yalnız küçük çalışmalar için: büyük metni tekrar üretmek tableti kilitliyor
+  put(d) { return this.tx('readwrite', s => s.put(d)).catch(e => { const j = JSON.stringify(d); if (j.length > 1500000) throw e; try { localStorage.setItem('excello.doc.' + d.id, j); } catch (e2) { throw e; } }); },
   get(id) { return this.tx('readonly', s => s.get(id)).then(r => r || JSON.parse(localStorage.getItem('excello.doc.' + id) || 'null')).catch(() => JSON.parse(localStorage.getItem('excello.doc.' + id) || 'null')); },
   all() { return this.tx('readonly', s => s.getAll()); },
   del(id) { try { localStorage.removeItem('excello.doc.' + id); } catch (e) { } return this.tx('readwrite', s => s.delete(id)); }
@@ -42,9 +43,13 @@ class Modern {
   }
   async boot() {
     try {
-      const id = LS.get('cur', null); const doc = id && await DB.get(id);
-      if (doc) { const wb = M.Workbook.fromJSON(doc.data); wb.format = doc.format || 'xlsx'; this.docId = id; this.attach(wb); }
+      // son açılış bu çalışmayı yüklerken çöktüyse aynı döngüye girme: boş çalışmayla başla
+      const id = LS.get('cur', null); const crashed = id && LS.get('booting', null) === id;
+      const doc = id && !crashed && await DB.get(id);
+      if (doc) { this.docId = id; const wb = M.Workbook.fromJSON(doc.data); wb.format = doc.format || 'xlsx'; this.docId = id; this.attach(wb); }
+      else if (crashed) { const wb = new M.Workbook(); wb.name = 'Yeni Çalışma'; wb.sheets[0].name = 'Tablo 1'; this.docId = this.newId(); LS.set('cur', this.docId); this.attach(wb); }
       else { this.docId = this.newId(); this.sample(); }
+      if (crashed) setTimeout(() => U.alert('Son çalışma geçen sefer açılırken uygulama kapandı, bu yüzden boş bir çalışmayla başladım. O çalışma silinmedi: Menü → Son çalışmalar’dan açabilirsiniz.', 'Güvenli açılış'), 300);
     } catch (e) { this.docId = this.newId(); }
     const openUrl = new URLSearchParams(location.search).get('open'); if (openUrl) this.openFromUrl(openUrl);
     if ('serviceWorker' in navigator && /^https?:/.test(location.protocol) && location.hostname !== 'localhost') { const had = !!navigator.serviceWorker.controller; navigator.serviceWorker.register('sw.js').catch(() => { }); navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !this._reloaded) { this._reloaded = true; this.saveLocal().then(() => location.reload()); } }); }
@@ -59,6 +64,8 @@ class Modern {
     if (this.T) this.render();
   }
   attach(wb) {
+    // çizim bitmeden uygulama kapanırsa bir sonraki açılış bunu bilsin (bkz. boot)
+    if (this.docId) { LS.set('booting', this.docId); clearTimeout(this._bootT); this._bootT = setTimeout(() => LS.set('booting', null), 1500); }
     this.wb = wb; wb.listeners = []; wb.on(() => this.onChange());
     if (wb.active >= wb.sheets.length) wb.active = 0;
     this.render();
@@ -76,6 +83,7 @@ class Modern {
     this.main = h('main', { class: 'm-main' }, this.head, this.tools, this.body);
     this.scrim = h('div', { class: 'm-scrim', onclick: () => root.classList.remove('side-open') });
     root.append(this.side, this.scrim, this.main);
+    this.body.addEventListener('scroll', () => this._more && this._more(), { passive: true });
     addEventListener('keydown', e => {
       if (e.target.closest && e.target.closest('input,textarea,select')) return;
       const g = this.view === 'list' && !U.topDialog() ? this.selRect() : null;
@@ -164,7 +172,7 @@ class Modern {
     if (this.msel && (this.msel.si !== this.wb.active || this.view !== 'list')) this.msel = null;
     this.renderSide(); this.renderHead(T); this.renderTools(T);
     const sc = this.body.scrollTop;
-    this.body.innerHTML = '';
+    this.body.innerHTML = ''; this._more = null;
     if (!T.cols.length) this.body.append(this.emptyState());
     else if (this.view === 'cards') this.body.append(this.viewCards(T));
     else if (this.view === 'summary') this.body.append(this.viewSummary(T));
@@ -223,6 +231,7 @@ class Modern {
         h('button', { class: 'btn m-calc', html: icon('wand') + '<span>Hesapla</span>', onclick: () => { this.focusCol(T, T.cols[0] && T.cols[0].c); this.wiz.openRecipes(); } }),
         h('button', { class: 'btn', html: icon('pointer') + '<span>Bul ve getir</span>', onclick: () => this.lookupTool() }),
         h('button', { class: 'btn', html: icon('plus') + '<span>Sütun</span>', onclick: () => this.addColumn(T) }),
+        h('button', { class: 'btn m-fillbtn', html: icon('fillDown') + '<span>Doldur</span>', onclick: () => this.pickFillCol(T) }),
         h('button', { class: 'btn', html: icon('filter') + '<span>Filtre</span>', onclick: e => this.filterDialog(T) }),
         h('button', { class: 'btn', html: icon('fill') + '<span>Renk</span>', onclick: () => this.colorDialog(T) })),
       chips);
@@ -241,16 +250,28 @@ class Modern {
     for (const col of T.cols) hr.append(h('th', { class: 'k-' + col.kind + (col.computed ? ' m-fx' : ''), onclick: e => this.colMenu(e.currentTarget, T, col), oncontextmenu: e => { e.preventDefault(); this.colMenu(e.currentTarget, T, col); } }, h('div', { class: 'm-th' }, this.badge(col), h('span', { class: 'm-th-t', text: col.name }), vs.sort && vs.sort.c === col.c ? h('span', { class: 'm-sortm', text: vs.sort.dir > 0 ? '↑' : '↓' }) : null, h('span', { class: 'm-th-dd', html: icon('down') }))));
     const tb = h('tbody');
     this._vr = rows; this._vc = T.cols; this._vT = T;
-    rows.forEach((r, i) => {
-      const tr = h('tr', null, h('td', { class: 'm-rn', text: String(i + 1), title: 'Kaydı aç', onclick: () => this.rowForm(T, r), oncontextmenu: e => { e.preventDefault(); this.msel = { si, a: { ri: i, ci: 0 }, b: { ri: i, ci: T.cols.length - 1 } }; this.paintSel(); this.selMenu(e); } }));
-      T.cols.forEach((col, ci) => {
-        const v = wb.value(si, r, col.c); const st = wb.cfStyle ? wb.cfStyle(si, r, col.c) : null;
-        const td = h('td', { class: 'k-' + col.kind + (col.computed ? ' m-fx' : '') + (X.isErr(v) ? ' err' : '') + (typeof v === 'number' ? ' num' : ''), text: wb.display(si, r, col.c), 'data-r': r, 'data-c': col.c, 'data-ri': i, 'data-ci': ci });
-        this.paintCell(td, si, r, col.c, st);
-        tr.append(td);
-      });
-      tb.append(tr);
-    });
+    // çok satırlı tabloda hepsini birden çizme: kaydırdıkça parça parça ekle
+    const shown = this.shownFor(si, rows.length); let done = 0;
+    const more = h('button', { class: 'm-more', onclick: () => grow(300) });
+    const grow = (n, first) => {
+      const to = Math.min(rows.length, done + n); const frag = document.createDocumentFragment();
+      for (let i = done; i < to; i++) {
+        const r = rows[i];
+        const tr = h('tr', null, h('td', { class: 'm-rn', text: String(i + 1), title: 'Kaydı aç', onclick: () => this.rowForm(T, r), oncontextmenu: e => { e.preventDefault(); this.msel = { si, a: { ri: i, ci: 0 }, b: { ri: i, ci: T.cols.length - 1 } }; this.paintSel(); this.selMenu(e); } }));
+        T.cols.forEach((col, ci) => {
+          const v = wb.value(si, r, col.c); const st = wb.cfStyle ? wb.cfStyle(si, r, col.c) : null;
+          const td = h('td', { class: 'k-' + col.kind + (col.computed ? ' m-fx' : '') + (X.isErr(v) ? ' err' : '') + (typeof v === 'number' ? ' num' : ''), text: wb.display(si, r, col.c), 'data-r': r, 'data-c': col.c, 'data-ri': i, 'data-ci': ci });
+          this.paintCell(td, si, r, col.c, st);
+          tr.append(td);
+        });
+        frag.append(tr);
+      }
+      tb.append(frag); done = to; this._shown = { si, n: done };
+      more.style.display = done < rows.length ? '' : 'none'; more.textContent = 'Daha fazla göster (' + (rows.length - done) + ' kayıt kaldı)';
+      if (!first) this.paintSel();
+    };
+    this._more = () => { const b = this.body; if (done < rows.length && b.scrollTop + b.clientHeight > b.scrollHeight - 800) grow(100); };
+    grow(shown, true);
     this.bindSel(tb, T);
     const tf = h('tr', null, h('td', { class: 'm-rn' }));
     for (const col of T.cols) {
@@ -262,10 +283,12 @@ class Modern {
     tbl.append(h('thead', null, hr), tb, h('tfoot', null, tf));
     const wrap = h('div', { class: 'm-card m-listwrap' }, h('div', { class: 'm-scrollx' }, tbl));
     if (!rows.length) wrap.append(h('div', { class: 'm-none', text: vs.q || vs.filters.length ? 'Aramaya / filtreye uyan kayıt yok' : 'Henüz kayıt yok' }));
-    wrap.append(h('button', { class: 'm-addrow', html: icon('plus') + '<span>Yeni kayıt</span>', onclick: () => this.rowForm(T, null) }));
+    wrap.append(more, h('button', { class: 'm-addrow', html: icon('plus') + '<span>Yeni kayıt</span>', onclick: () => this.rowForm(T, null) }));
     requestAnimationFrame(() => this.paintSel());
     return wrap;
   }
+  // yeniden çizimde, kullanıcının o ana kadar açtığı kadar satırı koru
+  shownFor(si, total, base = 60) { const k = this._shown; const n = k && k.si === si ? Math.max(base, k.n) : base; return Math.min(total, n); }
   // hücre rengi: önce hücrenin kendi biçimi, sonra renk kuralları
   paintCell(el, si, r, c, st) {
     const own = (this.wb.cell(si, r, c) || {}).s || {};
@@ -383,6 +406,7 @@ class Modern {
       { text: 'Yapıştır', icon: 'paste', kbd: 'Ctrl+V', onClick: async () => { try { this.selPaste(await navigator.clipboard.readText()); } catch (e) { U.toast('Yapıştırmak için Ctrl+V kullanın'); } } },
       ...(nums.length > 1 ? [{ text: 'Toplamı kopyala (' + X.formatValue(sum, '#,##0.##') + ')', icon: 'sigma', onClick: async () => { try { await navigator.clipboard.writeText(X.formatValue(sum, '0.##')); U.toast('✓ Toplam kopyalandı'); } catch (e) { } } }] : []),
       { text: 'İçini temizle', icon: 'eraser', kbd: 'Delete', onClick: () => this.selClear() },
+      ...(c0.col.computed ? [] : [{ text: 'Doldur (sıra no, tarih, rastgele)…', icon: 'fillDown', onClick: () => { const rs = this._vr.slice(g.r1, g.r2 + 1); this.msel = null; this.paintSel(); this.fillDialog(T, c0.col, rs); } }]),
       { sep: 1 },
       { text: 'Biçim ▸', icon: 'hash', onClick: () => sub(KINDS.map(([k, t, b]) => ({ text: b + '  ' + t, onClick: () => setAll({ nf: KIND_NF[k] }) }))) },
       { text: 'Renk ▸', icon: 'fill', onClick: () => sub([...TONES.map(t => ({ text: t[0], swatch: t[1], onClick: () => setAll({ bg: t[1], fc: t[2] }) })), { sep: 1 }, { text: 'Rengi kaldır', icon: 'eraser', onClick: () => setAll({ bg: null, fc: null }) }]) },
@@ -511,12 +535,15 @@ class Modern {
     const wb = this.wb, si = T.si; const rows = this.rowsOf(T);
     const titleCol = T.cols.find(c => c.kind === 'text' && !c.computed) || T.cols[0];
     const grid = h('div', { class: 'm-cards' });
-    for (const r of rows) {
+    const lim = this.shownFor(si, rows.length, 60);
+    for (const r of rows.slice(0, lim)) {
       const card = h('button', { class: 'm-rcard', onclick: () => this.rowForm(T, r) }, h('div', { class: 'm-rcard-t', text: wb.display(si, r, titleCol.c) || '(adsız)' }));
       const dl = h('dl');
       for (const col of T.cols) { if (col === titleCol) continue; const dd = h('dd', { class: (col.computed ? 'm-fx ' : '') + (X.isErr(wb.value(si, r, col.c)) ? 'err' : '') }); const pill = h('span', { class: 'm-pill', text: wb.display(si, r, col.c) || '—' }); this.paintCell(pill, si, r, col.c, wb.cfStyle(si, r, col.c)); dd.append(pill); dl.append(h('dt', null, this.badge(col), h('span', { text: col.name })), dd); }
       card.append(dl); grid.append(card);
     }
+    if (lim < rows.length) grid.append(h('button', { class: 'm-rcard add', onclick: () => { this._shown = { si, n: lim + 120 }; this.render(); } }, h('span', { html: icon('down') }), h('span', { text: 'Daha fazla göster (' + (rows.length - lim) + ' kayıt kaldı)' })));
+    this._shown = { si, n: lim };
     grid.append(h('button', { class: 'm-rcard add', onclick: () => this.rowForm(T, null) }, h('span', { html: icon('plus') }), h('span', { text: 'Yeni kayıt' })));
     return grid;
   }
@@ -551,20 +578,141 @@ class Modern {
     setTimeout(() => { const f = ins[0] && ins[0].inp; if (f && !isMobile()) f.focus(); }, 60);
   }
   // tablonun sonuna (Toplam satırının üstüne) boş satır ekler; hesaplanan sütunların formülünü üstteki satırdan kopyalar
-  insertRow(T) {
+  insertRow(T, k = 1) {
     const wb = this.wb, si = T.si; const at = T.r2 + 1; const last = T.r2 >= T.r0 ? T.r2 : null;
     wb.begin();
     if (T.totals.length) {
-      wb.shift(si, 'r', at, 1);
-      // Toplam formüllerinin alanını yeni satırı kapsayacak şekilde genişlet
-      for (const tr of T.totals) { const rr = tr + 1; const d = wb.dims(si); for (let c = 0; c < d.cols; c++) { const cl = wb.cell(si, rr, c); if (cl && cl.f) { const nf = cl.f.replace(/(:\$?[A-Z]+\$?)(\d+)/g, (m, a, n) => +n === at ? a + (at + 1) : m); if (nf !== cl.f) wb.patchCell(si, rr, c, { f: nf, v: null }); } } }
+      wb.shift(si, 'r', at, k);
+      // Toplam formüllerinin alanını yeni satırları kapsayacak şekilde genişlet
+      for (const tr of T.totals) { const rr = tr + k; const d = wb.dims(si); for (let c = 0; c < d.cols; c++) { const cl = wb.cell(si, rr, c); if (cl && cl.f) { const nf = cl.f.replace(/(:\$?[A-Z]+\$?)(\d+)/g, (m, a, n) => +n === at ? a + (at + k) : m); if (nf !== cl.f) wb.patchCell(si, rr, c, { f: nf, v: null }); } } }
     }
-    if (last != null) for (const col of T.cols) {
+    if (last != null) for (let i = 0; i < k; i++) for (const col of T.cols) {
       const src = wb.cell(si, last, col.c);
-      if (src && src.f != null && col.computed) wb.patchCell(si, at, col.c, { f: X.shiftFormula(src.f, at - last, 0), v: null });
-      if (src && src.s) wb.setStyle(si, at, col.c, Object.assign({}, src.s));
+      if (src && src.f != null && col.computed) wb.patchCell(si, at + i, col.c, { f: X.shiftFormula(src.f, at + i - last, 0), v: null });
+      if (src && src.s) wb.setStyle(si, at + i, col.c, Object.assign({}, src.s));
     }
     wb.end(); return at;
+  }
+
+  // araç çubuğundan: önce hangi sütun
+  pickFillCol(T) {
+    const cols = T.cols.filter(c => !c.computed); if (!cols.length) { U.toast('Önce bir sütun ekleyin'); this.addColumn(T); return; }
+    if (cols.length === 1) return this.fillDialog(T, cols[0]);
+    const btn = $('.m-actions .m-fillbtn') || this.tools;
+    U.menu(btn, [{ head: 'Hangi sütun doldurulsun?' }, ...cols.map(c => ({ text: c.name, icon: c.kind === 'date' ? 'calendar' : 'hash', onClick: () => this.fillDialog(T, c) }))]);
+  }
+  // ---------- doldur: sıra numarası, tarih sırası, rastgele sayı / tarih / listeden ----------
+  // rows verilirse (seçim) yalnız o hücrelere yazılır; verilmezse ilk kayıttan başlar, gerekirse yeni kayıt eklenir
+  fillDialog(T, col, rows) {
+    const wb = this.wb, si = T.si; col = col || T.cols.find(c => !c.computed);
+    if (!col) { U.toast('Önce bir sütun ekleyin'); return; }
+    if (col.computed) { U.toast('“' + col.name + '” hesaplanan bir sütun; içine yazılmaz'); return; }
+    const MAX = 50000, nRec = Math.max(0, T.r2 - T.r0 + 1), fixed = rows && rows.length > 1 ? rows : null;
+    const fmtD = v => X.formatValue(v, 'dd.mm.yyyy');
+    const today = (() => { const d = new Date(); return Math.round(X.dateToSerial(new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())))); })();
+    const pd = t => { const d = X.parseDateLoose(String(t || '').trim()); return d ? Math.floor(d.v) : null; };
+    const pn = t => X.parseNumLoose(String(t || '').trim());
+    let mode = col.kind === 'date' ? 'date' : 'seq';
+    const inp = (v, ph, im) => h('input', { class: 'inp', value: v, placeholder: ph || '', inputmode: im || 'decimal' });
+    const defN = String(fixed ? fixed.length : nRec || 10);
+    const F = {
+      a: inp('1', 'Ör: 1'), b: inp(defN, 'Ör: 100'), step: inp('1', '1'),
+      da: inp(fmtD(today), 'Ör: 01.11.2026', 'text'), db: inp('', 'Boş bırakılabilir', 'text'), dn: inp('1', '1'),
+      unit: h('select', { class: 'inp' }, ...[['d', 'gün'], ['w', 'hafta'], ['m', 'ay'], ['y', 'yıl']].map(([v, t]) => h('option', { value: v, text: t }))),
+      min: inp('1', 'Ör: 1'), max: inp('100', 'Ör: 100'), dec: inp('0', '0'),
+      ra: inp(fmtD(today - 365), 'Ör: 01.01.2026', 'text'), rb: inp(fmtD(today), 'Ör: 31.12.2026', 'text'),
+      list: h('textarea', { class: 'inp', rows: 3, placeholder: 'Virgülle ya da alt alta yazın. Ör: Ankara, İzmir, İstanbul' }),
+      n: inp(defN, 'Ör: 50')
+    };
+    if (col.kind === 'text') F.list.value = this.distinct(T, col).slice(0, 30).join(', ');
+    const chk = t => { const c = h('input', { type: 'checkbox' }); return { c, el: h('label', { class: 'chk' }, c, h('span', { text: t })) }; };
+    const sortC = chk('Küçükten büyüğe sırala'), uniqC = chk('Aynı değer iki kez çıkmasın'), workC = chk('Hafta sonlarını atla (yalnız iş günleri)');
+    const row = (t, el) => h('div', { class: 'frow' }, h('label', { class: 'lbl', text: t }), el);
+    const pair = (...els) => h('div', { class: 'm-fillpair' }, ...els.filter(Boolean));
+    const body = h('div', { class: 'form m-fill' }); const hint = h('p', { class: 'hint m-fillhint' });
+    const MODES = [['seq', '1, 2, 3… sıra'], ['date', 'Tarih sırası'], ['rnd', 'Rastgele sayı'], ['rdate', 'Rastgele tarih'], ['pick', 'Listeden rastgele']];
+    const addUnit = (s, k, u) => {
+      if (u === 'd') return s + k; if (u === 'w') return s + 7 * k;
+      const d = X.serialToDate(s); const y = d.getUTCFullYear(), m = u === 'm' ? d.getUTCMonth() + k : d.getUTCMonth() + 12 * k, dd = d.getUTCDate();
+      const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate(); return Math.round(X.dateToSerial(new Date(Date.UTC(y, m, Math.min(dd, last)))));
+    };
+    const weekend = s => { const w = X.serialToDate(s).getUTCDay(); return w === 0 || w === 6; };
+    // değerleri üret; sorun varsa açıklama metni döndür
+    const make = () => {
+      const want = fixed ? fixed.length : null; const cnt = () => { const n = Math.floor(pn(F.n.value)); return n > 0 ? n : null; };
+      if (mode === 'seq') {
+        const a = pn(F.a.value); let st = pn(F.step.value) || 1; if (a == null) return 'Başlangıç sayısını yazın';
+        let n = want; if (!n) { const b = pn(F.b.value); if (b == null) return 'Bitiş sayısını yazın'; if (b < a && st > 0) st = -st; n = Math.floor((b - a) / st + 1e-9) + 1; }
+        if (!(n > 0)) return 'Bu artışla bitiş sayısına ulaşılamıyor'; if (n > MAX) return 'En fazla ' + MAX + ' değer';
+        const dp = Math.max(...[a, st].map(x => (String(x).split('.')[1] || '').length));
+        return { vals: Array.from({ length: n }, (_, i) => +(a + i * st).toFixed(dp)) };
+      }
+      if (mode === 'date') {
+        const a = pd(F.da.value); if (a == null) return 'Başlangıç tarihini yazın (Ör: 01.11.2026)';
+        const k = Math.max(1, Math.floor(pn(F.dn.value) || 1)), u = F.unit.value, work = workC.c.checked;
+        const b = !fixed && F.db.value.trim() ? pd(F.db.value) : null; if (!fixed && F.db.value.trim() && b == null) return 'Bitiş tarihi okunamadı';
+        const n = want || (b == null ? cnt() : null); if (b == null && !n) return 'Bitiş tarihini ya da kaç tane olacağını yazın';
+        if (b != null && b < a) return 'Bitiş tarihi başlangıçtan önce';
+        const vals = [];
+        for (let i = 0; vals.length < (n || Infinity); i++) {
+          const s = addUnit(a, i * k, u); if (b != null && s > b) break;
+          if (!(work && weekend(s))) vals.push(s);
+          if (vals.length > MAX || i > MAX * 3) return 'En fazla ' + MAX + ' değer';
+        }
+        return vals.length ? { vals, date: 1 } : 'Bu aralıkta tarih yok';
+      }
+      const n = want || cnt(); if (!n) return 'Kaç tane olacağını yazın'; if (n > MAX) return 'En fazla ' + MAX + ' değer';
+      const uniq = uniqC.c.checked; let vals = [];
+      if (mode === 'rnd' || mode === 'rdate') {
+        const date = mode === 'rdate'; let lo = date ? pd(F.ra.value) : pn(F.min.value), hi = date ? pd(F.rb.value) : pn(F.max.value);
+        if (lo == null || hi == null) return date ? 'İki tarihi de yazın' : 'En küçük ve en büyük sayıyı yazın'; if (hi < lo) [lo, hi] = [hi, lo];
+        const dec = date ? 0 : Math.max(0, Math.min(6, Math.floor(pn(F.dec.value) || 0))); const f = 10 ** dec;
+        const span = Math.floor((hi - lo) * f + 1e-9) + 1; if (uniq && span < n) return 'Bu aralıkta yalnız ' + span + ' farklı değer var';
+        const one = x => +(lo + x / f).toFixed(dec);
+        if (uniq) { const seen = new Set(); while (vals.length < n) { const x = Math.floor(Math.random() * span); if (!seen.has(x)) { seen.add(x); vals.push(one(x)); } } }
+        else vals = Array.from({ length: n }, () => one(Math.floor(Math.random() * span)));
+        if (sortC.c.checked) vals.sort((x, y) => x - y);
+        return { vals, date };
+      }
+      const items = F.list.value.split(/[,;\n]/).map(x => x.trim()).filter(Boolean); if (!items.length) return 'Seçilecek değerleri yazın';
+      if (uniq && items.length < n) return 'Listede yalnız ' + items.length + ' değer var';
+      const pool = items.slice(); for (let i = 0; i < n; i++) { const j = Math.floor(Math.random() * pool.length); vals.push(uniq ? pool.splice(j, 1)[0] : pool[j]); }
+      if (sortC.c.checked) vals.sort((x, y) => String(x).localeCompare(String(y), 'tr'));
+      return { vals };
+    };
+    const preview = () => {
+      const r = make(); hint.classList.toggle('warn', typeof r === 'string'); if (typeof r === 'string') { hint.textContent = r; return; }
+      const v = r.vals; const show = x => r.date ? fmtD(x) : typeof x === 'number' ? X.formatValue(x, '0.######') : x;
+      const add = fixed ? 0 : Math.max(0, v.length - nRec);
+      hint.textContent = v.length + ' değer: ' + (v.length > 6 ? v.slice(0, 4).map(show).join(', ') + ' … ' + show(v[v.length - 1]) : v.map(show).join(', ')) + (add ? ' · ' + add + ' yeni kayıt eklenecek' : '');
+    };
+    const draw = () => {
+      body.innerHTML = '';
+      body.append(h('div', { class: 'segs m-modes' }, ...MODES.map(([k, t]) => h('button', { class: 'seg' + (mode === k ? ' on' : ''), type: 'button', text: t, onclick: () => { mode = k; draw(); } }))));
+      body.append(h('p', { class: 'hint', text: 'Sütun: ' + col.name + (fixed ? ' · seçili ' + fixed.length + ' hücreye yazılır' : ' · ilk kayıttan başlayıp aşağı doğru') }));
+      if (mode === 'seq') body.append(pair(row('Başlangıç', F.a), fixed ? null : row('Bitiş (kaça kadar)', F.b), row('Artış', F.step)));
+      if (mode === 'date') body.append(pair(row('Başlangıç tarihi', F.da), fixed ? null : row('Bitiş tarihi', F.db)), pair(row('Her', F.dn), row('Aralık', F.unit), fixed ? null : row('Bitiş yoksa kaç tane', F.n)), workC.el);
+      if (mode === 'rnd') body.append(pair(row('En küçük', F.min), row('En büyük', F.max), row('Ondalık basamak', F.dec)));
+      if (mode === 'rdate') body.append(pair(row('Şu tarihten', F.ra), row('Şu tarihe', F.rb)));
+      if (mode === 'pick') body.append(row('Değerler', F.list));
+      if (mode !== 'seq' && mode !== 'date') body.append(fixed ? null : row('Kaç tane', F.n), sortC.el, uniqC.el);
+      body.append(hint); preview();
+    };
+    body.addEventListener('input', preview); body.addEventListener('change', preview);
+    draw();
+    U.dialog({ title: icon('fillDown') + ' Doldur', body, buttons: [{ text: 'Vazgeç', value: null }, { text: 'Doldur', kind: 'primary', onClick: () => {
+      const r = make(); if (typeof r === 'string') { U.toast(r); return false; }
+      const v = r.vals; let target = fixed;
+      wb.begin();
+      if (!target) {
+        const add = v.length - nRec; const at = nRec ? T.r0 : T.r2 + 1;
+        if (add > 0) this.insertRow(T, add);
+        target = Array.from({ length: v.length }, (_, i) => at + i);
+      }
+      const dateNf = X.isDateFormat(col.nf || '');
+      target.forEach((rr, i) => { if (i >= v.length) return; wb.patchCell(si, rr, col.c, { v: v[i], f: null }); if (r.date && !dateNf) wb.setStyle(si, rr, col.c, { nf: 'dd.mm.yyyy' }); });
+      wb.end(); U.toast('✓ ' + Math.min(v.length, target.length) + ' hücre dolduruldu (Geri al ile geri alınır)'); return true;
+    }, value: 1 }] });
   }
 
   // ---------- sütunlar ----------
@@ -575,6 +723,7 @@ class Modern {
       { text: 'Küçükten büyüğe sırala', icon: 'sortA', onClick: () => { vs.sort = { c: col.c, dir: 1 }; this.render(); } },
       { text: 'Büyükten küçüğe sırala', icon: 'sortD', onClick: () => { vs.sort = { c: col.c, dir: -1 }; this.render(); } },
       { text: 'Bu sütuna göre filtrele…', icon: 'filter', onClick: () => this.filterDialog(T, col) },
+      ...(col.computed ? [] : [{ text: 'Doldur (sıra no, tarih, rastgele)…', icon: 'fillDown', onClick: () => this.fillDialog(T, col) }]),
       { sep: 1 },
       { text: 'Bu sütunla hesapla…', icon: 'wand', onClick: () => { this.focusCol(T, col.c); this.wiz.openRecipes(); } },
       { text: 'Renk ver…', icon: 'fill', onClick: () => this.colorDialog(T, col) },
@@ -1053,7 +1202,8 @@ class Modern {
     const d = U.dialog({ title: icon('layers') + ' Son çalışmalar', body, buttons: [{ text: 'Kapat', value: null }] });
   }
   busy(msg) { const el = h('div', { class: 'busy' }, h('div', { class: 'spin' }), h('span', { text: msg })); document.body.append(el); return () => el.remove(); }
-  scheduleSave() { clearTimeout(this._saveT); this._saveT = setTimeout(() => this.saveLocal(), 1000); }
+  // büyük çalışmada her tuşta kaydetme: hücre sayısına göre bekle
+  scheduleSave() { let n = 0; for (const s of this.wb.sheets) n += s.cells.size; clearTimeout(this._saveT); this._saveT = setTimeout(() => this.saveLocal(), n > 20000 ? 4000 : n > 5000 ? 2000 : 1000); }
   async saveLocal() {
     clearTimeout(this._saveT); if (!this.docId) return;
     try { await DB.put({ id: this.docId, name: this.wb.name || 'Çalışma', updated: Date.now(), data: this.wb.toJSON(), format: this.wb.format || 'xlsx' }); LS.set('cur', this.docId); }

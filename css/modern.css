@@ -106,6 +106,12 @@ html.dark .m-badge.m-fx { background: #3d1229; color: #f9a8d4; }
 .m-addrow { display: flex; align-items: center; gap: 8px; width: 100%; padding: 14px 16px; color: var(--accent); font-weight: 650; border-top: 1px solid var(--line); }
 .m-addrow:hover { background: var(--accent-soft); }
 .m-addrow .i { width: 18px; height: 18px; }
+.m-more { display: block; width: 100%; padding: 12px 16px; color: var(--muted); font-weight: 600; border-top: 1px solid var(--line); text-align: center; }
+.m-more:hover { background: var(--surface-2); color: var(--text); }
+.m-fillpair { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0 12px; }
+.m-fill .m-modes { flex-wrap: wrap; margin-bottom: 6px; }
+.m-fillhint { margin-top: 10px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--accent-soft); color: var(--text); }
+.m-fillhint.warn { background: var(--surface-2); color: var(--danger); }
 .m-none { padding: 28px 16px; text-align: center; color: var(--muted); }
 
 /* kartlar */

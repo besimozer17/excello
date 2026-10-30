@@ -54,6 +54,19 @@ class Workbook {
     let rows = d.rows, cols = d.cols; for (const k of s._spill.keys()) { rows = Math.max(rows, kr(k) + 1); cols = Math.max(cols, kc(k) + 1); }
     return { rows, cols };
   }
+  // Excel'den gelen, verinin altında/sağında kalan boş ama biçimli hücreleri at (dosyayı ve kaydı şişiriyor)
+  trimEmpty() {
+    let n = 0;
+    for (const s of this.sheets) {
+      let R = -1, C = -1;
+      for (const [k, c] of s.cells) if (c.f != null || (c.v != null && c.v !== '')) { const r = kr(k), cc = kc(k); if (r > R) R = r; if (cc > C) C = cc; }
+      for (const m of s.merges) if (m.r1 <= R + 1 && m.c1 <= C + 1) { R = Math.max(R, m.r2); C = Math.max(C, m.c2); }
+      for (const [k, c] of s.cells) if (c.f == null && (c.v == null || c.v === '') && (kr(k) > R || kc(k) > C)) { s.cells.delete(k); n++; }
+      s.merges = s.merges.filter(m => m.r1 <= R && m.c1 <= C);
+    }
+    if (n) this.ver++;
+    return n;
+  }
   isRowHidden(si, r) { const s = this.sheets[si]; return s.hiddenR.has(r) || s.filterR.has(r); }
   isColHidden(si, c) { return this.sheets[si].hiddenC.has(c); }
 
@@ -334,7 +347,7 @@ class Workbook {
     }
     if (!wb.sheets.length) wb.sheets.push(new Sheet('Sayfa1'));
     wb.active = Math.min(o.active || 0, wb.sheets.length - 1);
-    wb.recalc(); return wb;
+    wb.trimEmpty(); wb.recalc(); return wb;
   }
 }
 
