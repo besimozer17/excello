@@ -203,7 +203,8 @@ class Modern {
       act('table', 'Örnek tablo', () => this.sample()));
     s.append(h('div', { class: 'spacer' }),
       h('div', { class: 'm-foot' },
-        h('button', { class: 'm-act', onclick: () => this.applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark') }, h('span', { html: icon('moon') }), h('span', { text: 'Koyu / açık' }))));
+        h('button', { class: 'm-act', onclick: () => this.applyTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark') }, h('span', { html: icon('moon') }), h('span', { text: 'Koyu / açık' })),
+        h('button', { class: 'm-act', onclick: async () => { await this.saveLocal(); LS.set('ui', 'klasik'); location.href = 'klasik.html'; } }, h('span', { html: icon('grid') }), h('span', { text: 'Klasik (Excel) görünüm' }))));
   }
   renderHead(T) {
     const wb = this.wb, sh = wb.sheet; const hd = this.head; hd.innerHTML = '';

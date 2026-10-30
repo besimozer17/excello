@@ -1,7 +1,8 @@
 // Excello çevrimdışı önbellek: internet varsa en yeni sürüm, yoksa cihazdaki kopya
-const V = 'excello-v13';
+const V = 'excello-v14';
 const FILES = ['./', './index.html', './manifest.webmanifest', './css/app.css',
   './js/formula.js', './js/model.js', './js/ui.js', './js/chart.js', './js/io.js', './js/wizard.js', './css/modern.css', './js/modern.js',
+  './klasik.html', './css/klasik.css', './js/grid.js', './js/app.js',
   './vendor/exceljs.min.js', './vendor/xlsx.full.min.js', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== V).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
