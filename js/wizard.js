@@ -126,14 +126,8 @@ class Wizards {
 
   // alan seçici kontrolü: sütun listesi + tablodan seç
   pickField(field, inp, dlg, onChange, opts) {
-    const bigPick = () => {
-      const prev = inp.value;
-      this.app.startPick({ label: field.label, initial: inp.value, dlg,
-        onChange: ref => { inp.value = ref; sync(); onChange && onChange(); },
-        onDone: ok => { if (!ok) inp.value = prev; sync(); onChange && onChange(); } });
-    };
     const pickBtn = h('button', { class: 'btn pickbtn', type: 'button', html: icon('table') + '<span>Tablodan seç</span>', onclick: () => {
-      this.miniPick({ label: field.label, initial: inp.value, single: field.single, onDone: ref => { inp.value = ref; sync(); onChange && onChange(); }, onBig: this.app.startPick ? bigPick : null });
+      this.miniPick({ label: field.label, initial: inp.value, single: field.single, onDone: ref => { inp.value = ref; sync(); onChange && onChange(); } });
     } });
     const t = this.table;
     if (!(opts && opts.cols) || !t || !t.cols.length) { var sync = () => { }; return h('div', { class: 'pickf' }, inp, pickBtn); }
@@ -241,7 +235,6 @@ class Wizards {
     });
     render();
     const dl = U.dialog({ title: icon('table') + ' ' + (o.label || 'Alan seç'), body: wrap, wide: true, cls: 'mp-dlg', buttons: [
-      ...(o.onBig ? [{ text: 'Büyük sayfada seç', kind: 'ghost', onClick: () => { dl.close(null); o.onBig(); return false; } }] : []),
       { text: 'Vazgeç', value: null },
       { text: 'Tamam', kind: 'primary', onClick: () => { if (!sel) { U.toast('Önce bir alan seçin'); return false; } o.onDone(ref()); }, value: true }] });
     return dl;
@@ -249,7 +242,7 @@ class Wizards {
 
   // ---------- Hazır hesaplar ----------
   openRecipes(groupFilter) {
-    const app = this.app; app.grid.editing && app.grid.commitEdit();
+    const app = this.app;
     const body = h('div', { class: 'recipes' });
     const groups = [...new Set(RECIPES.map(r => r.g))];
     const chips = h('div', { class: 'chips' });
@@ -443,8 +436,7 @@ class Wizards {
           }
           if (it.hdAll) for (let c = t.g.c1; c <= t.g.c2; c++) { const nf = wb.numFmt(tg.si, t.r0, c); if (nf) wb.setStyle(tg.si, tg.r, tg.c + (c - t.g.c1), { nf }); }
         }
-        wb.end(); const last = Math.max(...p.items.map(it => it.dc)); const span = p.items.some(i => i.hdAll) ? t.g.c2 - t.g.c1 : last;
-        app.autoFit(Array.from({ length: span + 1 }, (_, i) => tg.c + i)); app.moveChartsRightOf(tg.si, tg.c + span);
+        wb.end();
         app.setSel({ r: tg.r, c: tg.c, r1: tg.r, c1: tg.c, r2: tg.r, c2: tg.c }, true);
         d.close(); U.toast('✓ ' + rc.t + ' oluşturuldu'); return false;
       }
@@ -456,15 +448,12 @@ class Wizards {
   }
 
   // ---------- İşlev sihirbazı ----------
-  openFunctions(preName, insertMode, nested) {
+  openFunctions(preName, nested) {
     this.nested = nested || null;
     const app = this.app;
-    const editing = app.grid.editing;
-    this.insertMode = nested ? null : insertMode || (editing && app.grid.activeInput().value.startsWith('=') ? { el: app.grid.activeInput(), pos: app.grid.activeInput().selectionStart } : null);
-    if (!this.insertMode && editing && !nested) app.grid.commitEdit();
     if (preName && X.FN[preName]) return this.openFn(X.FN[preName]);
     // mevcut formülü düzenle
-    if (!this.insertMode && !nested) { const c = this.wb.cell(this.wb.active, app.sel.r, app.sel.c); if (c && c.f) { const m = /^([A-Z][A-Z0-9.]*)\((.*)\)$/s.exec(c.f); if (m && X.FN[m[1]] && balanced(m[2])) return this.openFn(X.FN[m[1]], splitArgs(X.toDisplay(c.f))); } }
+    if (!nested) { const c = this.wb.cell(this.wb.active, app.sel.r, app.sel.c); if (c && c.f) { const m = /^([A-Z][A-Z0-9.]*)\((.*)\)$/s.exec(c.f); if (m && X.FN[m[1]] && balanced(m[2])) return this.openFn(X.FN[m[1]], splitArgs(X.toDisplay(c.f))); } }
     const cats = ['Sık kullanılan', ...new Set(Object.values(X.FN).map(f => f.cat))];
     const fav = ['SUM', 'AVERAGE', 'IF', 'COUNTIF', 'SUMIF', 'VLOOKUP', 'XLOOKUP', 'ROUND', 'MAX', 'MIN', 'COUNTA', 'CONCATENATE', 'TODAY', 'DATEDIF', 'IFERROR', 'TEXT'];
     let cur = 'Sık kullanılan';
@@ -510,9 +499,9 @@ class Wizards {
         U.menu(anchor, [{ head: (c.name || X.colName(c.c)) + ' sütunundaki değerler' }, ...vals.map(v => ({ text: v, onClick: () => { target.value = v; target.dispatchEvent(new Event('input')); } }))]);
       };
       const nestBtn = target => h('button', { class: 'btn nestbtn', type: 'button', title: 'Bu kutuya başka bir işlev koy', text: 'ƒ', onclick: () => {
-        const keep = { target: this.target, table: this.table, insertMode: this.insertMode };
+        const keep = { target: this.target, table: this.table };
         d.hide(true);
-        this.openFunctions(null, null, { onPick: txt => { target.value = txt; target.dispatchEvent(new Event('input')); }, done: () => { Object.assign(this, keep); d.hide(false); upd(); } });
+        this.openFunctions(null, { onPick: txt => { target.value = txt; target.dispatchEvent(new Event('input')); }, done: () => { Object.assign(this, keep); d.hide(false); upd(); } });
       } });
       if (type === 'enum') { inp = h('select', { class: 'inp' }, a.o ? h('option', { value: '', text: '— varsayılan —' }) : null, ...a.opts.map(([v, t]) => h('option', { value: v, text: t }))); if (a.def) inp.value = a.def; row.append(inp); }
       else if (type === 'bool') { inp = h('select', { class: 'inp' }, a.o ? h('option', { value: '', text: '— varsayılan —' }) : null, h('option', { value: 'TRUE', text: 'Evet' }), h('option', { value: 'FALSE', text: 'Hayır' })); if (a.def) inp.value = a.def; row.append(inp); }
@@ -589,10 +578,9 @@ class Wizards {
       preview.append(h('details', { class: 'pv-f', open: true }, h('summary', { text: 'Formül' }), h('code', { text: '=' + X.toDisplay(f) })));
     }
     let fnClosing = false;
-    d = U.dialog({ title: '<span class="fx">fx</span> ' + fd.tr, body, onClose: () => { if (!fnClosing && this.nested) { const n = this.nested; this.nested = null; n.done(); } }, buttons: [{ text: 'Geri', onClick: () => { fnClosing = true; const n = this.nested; d.close(); this.openFunctions(null, this.insertMode, n); return false; } }, { text: this.insertMode ? 'Formüle ekle' : 'Uygula', kind: 'primary', onClick: () => {
+    d = U.dialog({ title: '<span class="fx">fx</span> ' + fd.tr, body, onClose: () => { if (!fnClosing && this.nested) { const n = this.nested; this.nested = null; n.done(); } }, buttons: [{ text: 'Geri', onClick: () => { fnClosing = true; const n = this.nested; d.close(); this.openFunctions(null, n); return false; } }, { text: 'Uygula', kind: 'primary', onClick: () => {
       let f; try { f = X.toStore(build()); X.parse(f); } catch (e) { U.toast('Girdileri kontrol edin', 'warn'); return false; }
       if (this.nested) { const n = this.nested; this.nested = null; n.onPick('=' + X.toDisplay(f)); fnClosing = true; d.close(); n.done(); return false; }
-      if (this.insertMode) { const im = this.insertMode; const el = im.el; const txt = X.toDisplay(f); el.value = el.value.slice(0, im.pos) + txt + el.value.slice(im.pos); app.grid.syncInputs(el); el.focus(); const p = im.pos + txt.length; el.setSelectionRange(p, p); app.grid.updateRefMarks(); d.close(); return false; }
       const t = this.target; app.applyFormula(t.si, t.r, t.c, f, 1, fd.fmt); d.close(); U.toast('✓ ' + fd.tr + ' eklendi'); return false;
     } }] });
     upd();

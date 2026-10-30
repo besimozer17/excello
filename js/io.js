@@ -150,9 +150,13 @@ async function readExcelJS(buf) {
         else if (d.type === 'whole' || d.type === 'decimal' || d.type === 'date' || d.type === 'textLength') { o.type = d.type === 'textLength' ? 'textlen' : d.type; const a1 = parseFloat(d.formulae && d.formulae[0]), a2 = parseFloat(d.formulae && d.formulae[1]); if (d.operator === 'between' || !d.operator) { o.min = isNaN(a1) ? null : a1; o.max = isNaN(a2) ? null : a2; } else if (/greaterThan/.test(d.operator)) o.min = a1; else if (/lessThan/.test(d.operator)) o.max = a1; }
         else continue;
         // aynı kuralları birleştir
-        const prev = s.dv.find(x => JSON.stringify({ ...x, range: 0 }) === JSON.stringify({ ...o, range: 0 }) && x.range.c1 === g.c1 && x.range.c2 === g.c2 && x.range.r2 + 1 === g.r1);
-        if (prev) prev.range.r2 = g.r2; else s.dv.push(o);
+        const prev = s.dv.find(x => JSON.stringify({ ...x, range: 0 }) === JSON.stringify({ ...o, range: 0 }) && x.range.c1 === g.c1 && x.range.c2 === g.c2 && g.r1 <= x.range.r2 + 1 && g.r2 >= x.range.r1 - 1);
+        if (prev) { prev.range.r1 = Math.min(prev.range.r1, g.r1); prev.range.r2 = Math.max(prev.range.r2, g.r2); } else s.dv.push(o);
       }
+      // hücre hücre gelen parçaları sırala ve bitişik olanları birleştir
+      const sig = x => JSON.stringify({ ...x, range: 0 }) + x.range.c1 + ':' + x.range.c2;
+      s.dv.sort((a, b) => sig(a) < sig(b) ? -1 : sig(a) > sig(b) ? 1 : a.range.r1 - b.range.r1);
+      s.dv = s.dv.reduce((out, x) => { const p = out[out.length - 1]; if (p && sig(p) === sig(x) && x.range.r1 <= p.range.r2 + 1) p.range.r2 = Math.max(p.range.r2, x.range.r2); else out.push(x); return out; }, []);
     } catch (e) { }
     // koşullu biçim
     try {

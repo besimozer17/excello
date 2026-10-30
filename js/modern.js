@@ -34,7 +34,6 @@ class Modern {
     this.sel = { r: 0, c: 0, r1: 0, c1: 0, r2: 0, c2: 0 };
     this.view = LS.get('m.view', 'list');
     this.vs = {}; // sayfa başına görünüm durumu (arama, filtre, sıralama, toplam türleri)
-    this.grid = { editing: false, commitEdit() { }, activeInput() { return null; }, syncInputs() { }, updateRefMarks() { } };
     this.applyTheme(LS.get('theme', 'auto'));
     this.wiz = new G.XW.Wizards(this);
     this.build();
@@ -210,6 +209,7 @@ class Modern {
     t.append(h('div', { class: 'm-searchbox' }, h('span', { html: icon('search') }), q),
       h('button', { class: 'btn', html: icon('filter') + '<span>Filtre</span>', onclick: e => this.filterDialog(T) }),
       h('button', { class: 'btn', html: icon('fill') + '<span>Renk</span>', onclick: () => this.colorDialog(T) }),
+      h('button', { class: 'btn', html: icon('search') + '<span>Bul ve getir</span>', onclick: () => this.lookupTool() }),
       h('button', { class: 'btn', html: icon('plus') + '<span>Sütun</span>', onclick: () => this.addColumn(T) }),
       h('button', { class: 'btn m-calc', html: icon('wand') + '<span>Hesapla</span>', onclick: () => { this.focusCol(T, T.cols[0] && T.cols[0].c); this.wiz.openRecipes(); } }),
       chips);
@@ -270,7 +270,7 @@ class Modern {
     if (td.querySelector('input')) return;
     const old = wb.editText(si, r, col.c);
     const inp = h('input', { class: 'm-cellinp', value: old });
-    const list = this.distinct(T, col);
+    const list = this.choices(T, col);
     td.textContent = ''; td.classList.add('editing'); td.append(inp); inp.focus(); inp.select();
     if (list.length && list.length <= 12 && col.kind === 'text') {
       const dl = h('datalist', { id: 'm-dl' }, ...list.map(v => h('option', { value: v }))); td.append(dl); inp.setAttribute('list', 'm-dl');
@@ -294,6 +294,12 @@ class Modern {
     const msg = { '#DIV/0!': 'Sıfıra bölme var: bölen boş ya da 0.', '#VALUE!': 'Sayı beklenen yerde metin var.', '#N/A': 'Aranan değer bulunamadı.', '#NAME?': 'Tanınmayan işlev ya da ad.', '#REF!': 'Kullanılan hücre silinmiş.', '#NUM!': 'Hesaplanamayan sayı.', '#DÖNGÜ!': 'Hesap kendi sonucunu kullanıyor.', '#HESAP!': 'Sonuç boş liste.', '#TAŞMA!': 'Sonuç listesi için yer yok.' }[v.code];
     if (msg) { U.toast(wb.display(si, r, c) + ' → ' + msg); return true; }
     return false;
+  }
+  // açılır liste kuralı (DÜŞEYARA arama tablosu gibi) varsa onun değerleri, yoksa sütundaki metinler
+  choices(T, col) {
+    const d = this.wb.dvAt(T.si, T.r0, col.c);
+    if (d && d.type === 'list') { const m = new Map(); for (const x of this.wb.dvItems(T.si, d)) if (!m.has(lc(x))) m.set(lc(x), x); return [...m.values()]; }
+    return col.kind === 'text' ? this.distinct(T, col) : [];
   }
   distinct(T, col) { const s = new Map(); for (let r = T.r0; r <= T.r2; r++) { const d = this.wb.display(T.si, r, col.c); if (d !== '' && !s.has(lc(d))) s.set(lc(d), d); } return [...s.values()]; }
   commitInput(si, r, c, text) {
@@ -333,8 +339,8 @@ class Modern {
       if (col.computed) { row.append(h('div', { class: 'm-ro', text: isNew ? 'Kaydedince hesaplanır' : wb.display(si, r, col.c) || '—' })); body.append(row); continue; }
       const inp = h('input', { class: 'inp', value: isNew ? '' : wb.editText(si, r, col.c), placeholder: col.kind === 'date' ? 'Ör: 30.10.2026' : col.kind === 'money' ? 'Ör: 1250' : col.kind === 'pct' ? 'Ör: %18' : '', inputmode: col.kind === 'text' || col.kind === 'date' ? 'text' : 'decimal' });
       row.append(inp);
-      const list = col.kind === 'text' ? this.distinct(T, col) : [];
-      if (list.length && list.length <= 10) { const ch = h('div', { class: 'vchips' }, ...list.map(v => h('button', { class: 'chip sm', type: 'button', text: v, onclick: () => { inp.value = v; U.$$('.chip', ch).forEach(x => x.classList.toggle('on', x.textContent === v)); } }))); row.append(ch); }
+      const list = this.choices(T, col);
+      if (list.length && list.length <= 30) { const ch = h('div', { class: 'vchips' }, ...list.map(v => h('button', { class: 'chip sm', type: 'button', text: v, onclick: () => { inp.value = v; U.$$('.chip', ch).forEach(x => x.classList.toggle('on', x.textContent === v)); } }))); row.append(ch); }
       ins.push({ col, inp }); body.append(row);
     }
     let rowTone;
@@ -464,6 +470,79 @@ class Modern {
     };
     draw();
     U.dialog({ title: icon('fill') + ' Renkler', body, wide: true, buttons: [{ text: 'Tamam', kind: 'primary', value: 1 }] });
+  }
+  // Bul ve getir: bir değer yazınca (Ör: Ankara) seçilen bilgileri getiren arama tablosu (DÜŞEYARA)
+  lookupTool() {
+    const wb = this.wb;
+    let si = wb.active; let S = this.table(si);
+    if (!S.cols.length) { const k = wb.sheets.findIndex((_, i) => this.table(i).cols.length); if (k < 0) { U.toast('Önce verisi olan bir tablo gerekir'); return; } si = k; S = this.table(k); }
+    let key = (S.cols.find(c => c.kind === 'text' && !c.computed) || S.cols[0]).c;
+    let rets = S.cols.filter(c => c.c !== key).map(c => c.c);
+    let mode = 'first'; let picks = [];
+    const body = h('div', { class: 'form m-look' });
+    const name = h('input', { class: 'inp' });
+    const draw = () => {
+      body.innerHTML = '';
+      const keyCol = S.cols.find(c => c.c === key);
+      const sel = h('select', { class: 'inp' }, ...wb.sheets.map((sh, i) => h('option', { value: i, text: sh.name }))); sel.value = si;
+      sel.onchange = () => { si = +sel.value; S = this.table(si); key = (S.cols.find(c => c.kind === 'text') || S.cols[0] || {}).c; rets = S.cols.filter(c => c.c !== key).map(c => c.c); picks = []; draw(); };
+      const chip = (t, on, fn) => h('button', { class: 'chip sm' + (on ? ' on' : ''), type: 'button', text: t, onclick: fn });
+      body.append(
+        h('div', { class: 'm-step' }, h('b', { text: '1' }), h('span', { text: 'Hangi tabloda aransın?' })), sel,
+        h('div', { class: 'm-step' }, h('b', { text: '2' }), h('span', { text: 'Hangi sütuna yazacağınız değer aransın?' })),
+        h('div', { class: 'vchips' }, ...S.cols.map(c => chip(c.name, c.c === key, () => { key = c.c; rets = S.cols.filter(x => x.c !== key).map(x => x.c); picks = []; draw(); }))),
+        h('div', { class: 'm-step' }, h('b', { text: '3' }), h('span', { text: 'Hangi bilgiler gelsin?' })),
+        h('div', { class: 'vchips' }, ...S.cols.filter(c => c.c !== key).map(c => chip(c.name, rets.includes(c.c), () => { const i = rets.indexOf(c.c); if (i >= 0) rets.splice(i, 1); else rets.push(c.c); rets.sort((a, b) => a - b); draw(); }))),
+        h('div', { class: 'm-step' }, h('b', { text: '4' }), h('span', { text: (keyCol ? keyCol.name : 'Değer') + ' birden çok satırda geçiyorsa' })),
+        h('div', { class: 'segs m-modes' }, ...[['first', 'İlk bulunanı getir'], ['sum', 'Sayıların toplamını al'], ['count', 'Kaç tane olduğunu say']].map(([k, t]) => h('button', { class: 'seg' + (mode === k ? ' on' : ''), type: 'button', text: t, onclick: () => { mode = k; draw(); } }))),
+        h('div', { class: 'm-step' }, h('b', { text: '5' }), h('span', { text: 'Şimdilik neleri arayalım? (sonra istediğinizi yazarsınız)' })));
+      const vals = keyCol ? this.distinct(S, keyCol) : [];
+      body.append(h('div', { class: 'vchips' }, chip('Hepsi', vals.length && picks.length === vals.length, () => { picks = picks.length === vals.length ? [] : vals.slice(); draw(); }), ...vals.slice(0, 40).map(v => chip(v, picks.includes(v), () => { const i = picks.indexOf(v); if (i >= 0) picks.splice(i, 1); else picks.push(v); draw(); }))));
+      // önizleme
+      const cols = this.lookCols(S, key, rets, mode);
+      const sample = picks[0] || vals[0];
+      if (sample != null && cols.length) {
+        const tbl = h('table', { class: 'm-t m-prev' }, h('thead', null, h('tr', null, h('th', { text: keyCol.name }), ...cols.map(c => h('th', { text: c.name })))));
+        const tb = h('tbody'); (picks.length ? picks : [sample]).slice(0, 4).forEach(v => { const tr = h('tr', null, h('td', { text: v })); cols.forEach(c => { let x; try { const n = X.parseNumLoose(String(v)); x = X.evaluate(X.parse(c.f(n != null ? String(n) : '"' + String(v).replace(/"/g, '""') + '"')), { model: wb, si, r: 0, c: 0 }); } catch (e) { x = '?'; } tr.append(h('td', { text: X.formatValue(X.isRng(x) ? x.get(0, 0) : x, c.nf || null) })); }); tb.append(tr); });
+        tbl.append(tb);
+        body.append(h('div', { class: 'm-step' }, h('b', { text: '✓' }), h('span', { text: 'Önizleme' })), h('div', { class: 'm-scrollx m-card' }, tbl));
+      }
+      if (!name.value || name.dataset.auto) { let nm = 'Arama - ' + (keyCol ? keyCol.name : ''), i = 2; const b = nm; while (wb.sheetIndex(nm) >= 0) nm = b + ' ' + i++; name.value = nm; name.dataset.auto = 1; }
+      body.append(h('label', { class: 'lbl', text: 'Yeni tablonun adı' }), name);
+    };
+    name.oninput = () => { delete name.dataset.auto; };
+    draw();
+    U.dialog({ title: icon('search') + ' Bul ve getir', body, wide: true, buttons: [{ text: 'Vazgeç', value: null }, { text: 'Oluştur', kind: 'primary', onClick: () => {
+      const cols = this.lookCols(S, key, rets, mode); if (!cols.length) { U.toast('Gelecek bilgileri seçin'); return false; }
+      const keyCol = S.cols.find(c => c.c === key); let nm = name.value.trim() || 'Arama'; if (wb.sheetIndex(nm) >= 0) { U.toast('Bu adda bir tablo var'); return false; }
+      wb.begin(); const sh = wb.addSheet(nm); const ti = wb.sheets.indexOf(sh);
+      const hs = { b: 1, bg: '#16a34a', fc: '#ffffff', ha: 'center' };
+      wb.patchCell(ti, 0, 0, { v: keyCol.name, f: null }); wb.setStyle(ti, 0, 0, hs);
+      cols.forEach((c, j) => { wb.patchCell(ti, 0, j + 1, { v: c.name, f: null }); wb.setStyle(ti, 0, j + 1, hs); });
+      const n = Math.max(1, picks.length);
+      for (let i = 0; i < n; i++) {
+        const R = i + 1; if (picks[i] != null) { const pi = IO.parseInput(String(picks[i])); wb.patchCell(ti, R, 0, { v: pi.v, f: null }); }
+        cols.forEach((c, j) => { wb.patchCell(ti, R, j + 1, { f: c.f('$A' + (R + 1)), v: null }); if (c.nf) wb.setStyle(ti, R, j + 1, { nf: c.nf }); });
+      }
+      // aranacak sütunda açılır liste: kaynak tablodaki değerler
+      sh.dv.push({ type: 'list', range: { r1: 1, c1: 0, r2: 500, c2: 0 }, src: '=' + X.quoteSheet(wb.sheets[si].name) + '!$' + X.colName(key) + '$' + (S.r0 + 1) + ':$' + X.colName(key) + '$' + (S.r2 + 500), msg: 'Bu değer “' + wb.sheets[si].name + '” tablosunda yok.' });
+      sh.colW = { 0: 140 }; cols.forEach((_, j) => sh.colW[j + 1] = 130); sh.freezeR = 1;
+      wb.active = ti; wb.end(); this.view = 'list'; this.render();
+      U.toast('✓ Arama tablosu hazır: ilk sütuna yazdığınız değerin bilgileri gelir');
+      return true;
+    }, value: 1 }] });
+  }
+  // her getirilecek bilgi için formül üreticisi (anahtar hücresini alır)
+  lookCols(S, key, rets, mode) {
+    const sh = X.quoteSheet(this.wb.sheets[S.si].name) + '!'; const r1 = S.r0 + 1, r2 = S.r2 + 500;
+    const rg = c => sh + '$' + X.colName(c) + '$' + r1 + ':$' + X.colName(c) + '$' + r2;
+    if (mode === 'count') return [{ name: 'Kaç tane', nf: null, f: k => `COUNTIF(${rg(key)},${k})` }];
+    return rets.map(c => S.cols.find(x => x.c === c)).filter(Boolean).filter(c => mode !== 'sum' || c.kind !== 'text' && c.kind !== 'date').map(col => ({
+      name: (mode === 'sum' ? 'Toplam ' : '') + col.name, nf: col.nf || null,
+      f: k => mode === 'sum' ? `SUMIF(${rg(key)},${k},${rg(col.c)})`
+        : col.c > key ? `IFERROR(VLOOKUP(${k},${sh}$${X.colName(key)}$${r1}:$${X.colName(col.c)}$${r2},${col.c - key + 1},FALSE),"Bulunamadı")`
+        : `IFERROR(INDEX(${rg(col.c)},MATCH(${k},${rg(key)},0)),"Bulunamadı")`
+    }));
   }
   kindMenu(anchor, T, col) {
     U.menu(anchor, KINDS.map(([k, t, b]) => ({ text: b + '  ' + t, on: k === col.kind, onClick: () => {
@@ -674,8 +753,6 @@ class Modern {
     this.sel = { r, c, r1: r, c1: c, r2: r + (n || 1) - 1, c2: c }; this.view = this.view === 'chart' || this.view === 'summary' ? 'list' : this.view; this.render();
     if (askName) setTimeout(async () => { const v = await U.prompt('Yeni sütunun adı', 'Hesap'); if (v && v.trim()) { wb.begin(); wb.patchCell(si, hdr.r, c, { v: v.trim(), f: null }); wb.end(); } }, 200);
   }
-  autoFit() { }
-  moveChartsRightOf() { }
 
   // ---------- dosya ----------
   newDoc() { this.saveLocal(); const wb = new M.Workbook(); wb.name = 'Yeni Çalışma'; wb.sheets[0].name = 'Tablo 1'; this.docId = this.newId(); LS.set('cur', this.docId); this.vs = {}; this.attach(wb); this.saveLocal(); setTimeout(() => this.addColumn(this.T), 120); }

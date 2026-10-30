@@ -224,3 +224,11 @@ html.dark .m-rcard dd.m-fx { color: #f9a8d4; }
 .m-recrow { display: flex; align-items: center; gap: 6px; }
 .m-recrow .m-opt { flex: 1; margin-bottom: 8px; }
 .m-recdel { color: var(--danger); margin-bottom: 8px; }
+
+/* bul ve getir */
+.m-step { display: flex; align-items: center; gap: 8px; margin: 14px 0 6px; font-weight: 650; }
+.m-step b { width: 24px; height: 24px; border-radius: 99px; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 12.5px; flex: none; }
+html.dark .m-step b { color: #04210f; }
+.m-look .vchips { margin-top: 0; }
+.m-prev { font-size: 13px; }
+.m-prev th, .m-prev td { height: 38px; cursor: default; }

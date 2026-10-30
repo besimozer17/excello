@@ -1,5 +1,5 @@
 ﻿// Excello çevrimdışı önbellek
-const V = 'excello-v6';
+const V = 'excello-v7';
 const FILES = ['./', './index.html', './manifest.webmanifest', './css/app.css',
   './js/formula.js', './js/model.js', './js/ui.js', './js/chart.js', './js/io.js', './js/wizard.js', './css/modern.css', './js/modern.js',
   './vendor/exceljs.min.js', './vendor/xlsx.full.min.js', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
