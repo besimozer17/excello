@@ -78,10 +78,21 @@ class Modern {
     root.append(this.side, this.scrim, this.main);
     addEventListener('keydown', e => {
       if (e.target.closest && e.target.closest('input,textarea,select')) return;
+      const g = this.view === 'list' && !U.topDialog() ? this.selRect() : null;
+      if (g) {
+        const mv = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[e.key];
+        if (mv) { e.preventDefault(); const k = e.shiftKey ? 'b' : 'a'; const p = this.msel[k]; const n = { ri: Math.max(0, Math.min(this._vr.length - 1, p.ri + mv[0])), ci: Math.max(0, Math.min(this._vc.length - 1, p.ci + mv[1])) }; if (e.shiftKey) this.msel.b = n; else this.msel = { si: this.msel.si, a: n, b: { ...n } }; this.paintSel(); const td = this.body.querySelector(`.m-t td[data-ri="${n.ri}"][data-ci="${n.ci}"]`); td && td.scrollIntoView({ block: 'nearest', inline: 'nearest' }); return; }
+        if (e.key === 'Escape') { this.msel = null; this.paintSel(); return; }
+        if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); this.selClear(); return; }
+        if (e.key === 'Enter' || e.key === 'F2') { e.preventDefault(); this.editAt(this.msel.a); return; }
+        if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); this.editAt(this.msel.a, e.key); return; }
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); this.wb.undo(); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); this.wb.redo(); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); this.saveAs('xlsx'); }
     });
+    document.addEventListener('copy', e => { if (e.target.closest && e.target.closest('input,textarea')) return; const t = this.view === 'list' && this.selRect() ? this.selTSV() : ''; if (t) { e.preventDefault(); e.clipboardData.setData('text/plain', t); U.toast('✓ Kopyalandı'); } });
+    document.addEventListener('paste', e => { if (e.target.closest && e.target.closest('input,textarea')) return; if (this.view === 'list' && this.selRect() && !U.topDialog()) { e.preventDefault(); this.selPaste(e.clipboardData.getData('text/plain')); } });
   }
 
   // ---------- tablo bilgisi ----------
@@ -150,6 +161,7 @@ class Modern {
   }
   renderNow() {
     const T = this.T = this.table();
+    if (this.msel && (this.msel.si !== this.wb.active || this.view !== 'list')) this.msel = null;
     this.renderSide(); this.renderHead(T); this.renderTools(T);
     const sc = this.body.scrollTop;
     this.body.innerHTML = '';
@@ -226,19 +238,20 @@ class Modern {
     const wb = this.wb, si = T.si, vs = this.vsCur; const rows = this.rowsOf(T);
     const tbl = h('table', { class: 'm-t' });
     const hr = h('tr', null, h('th', { class: 'm-rn' }));
-    for (const col of T.cols) hr.append(h('th', { class: 'k-' + col.kind + (col.computed ? ' m-fx' : ''), onclick: e => this.colMenu(e.currentTarget, T, col) }, h('div', { class: 'm-th' }, this.badge(col), h('span', { class: 'm-th-t', text: col.name }), vs.sort && vs.sort.c === col.c ? h('span', { class: 'm-sortm', text: vs.sort.dir > 0 ? '↑' : '↓' }) : null, h('span', { class: 'm-th-dd', html: icon('down') }))));
+    for (const col of T.cols) hr.append(h('th', { class: 'k-' + col.kind + (col.computed ? ' m-fx' : ''), onclick: e => this.colMenu(e.currentTarget, T, col), oncontextmenu: e => { e.preventDefault(); this.colMenu(e.currentTarget, T, col); } }, h('div', { class: 'm-th' }, this.badge(col), h('span', { class: 'm-th-t', text: col.name }), vs.sort && vs.sort.c === col.c ? h('span', { class: 'm-sortm', text: vs.sort.dir > 0 ? '↑' : '↓' }) : null, h('span', { class: 'm-th-dd', html: icon('down') }))));
     const tb = h('tbody');
+    this._vr = rows; this._vc = T.cols; this._vT = T;
     rows.forEach((r, i) => {
-      const tr = h('tr', null, h('td', { class: 'm-rn', text: String(i + 1), title: 'Kaydı aç', onclick: () => this.rowForm(T, r) }));
-      for (const col of T.cols) {
+      const tr = h('tr', null, h('td', { class: 'm-rn', text: String(i + 1), title: 'Kaydı aç', onclick: () => this.rowForm(T, r), oncontextmenu: e => { e.preventDefault(); this.msel = { si, a: { ri: i, ci: 0 }, b: { ri: i, ci: T.cols.length - 1 } }; this.paintSel(); this.selMenu(e); } }));
+      T.cols.forEach((col, ci) => {
         const v = wb.value(si, r, col.c); const st = wb.cfStyle ? wb.cfStyle(si, r, col.c) : null;
-        const td = h('td', { class: 'k-' + col.kind + (col.computed ? ' m-fx' : '') + (X.isErr(v) ? ' err' : '') + (typeof v === 'number' ? ' num' : ''), text: wb.display(si, r, col.c), 'data-r': r, 'data-c': col.c });
+        const td = h('td', { class: 'k-' + col.kind + (col.computed ? ' m-fx' : '') + (X.isErr(v) ? ' err' : '') + (typeof v === 'number' ? ' num' : ''), text: wb.display(si, r, col.c), 'data-r': r, 'data-c': col.c, 'data-ri': i, 'data-ci': ci });
         this.paintCell(td, si, r, col.c, st);
-        td.addEventListener('click', () => this.editCell(td, T, r, col));
         tr.append(td);
-      }
+      });
       tb.append(tr);
     });
+    this.bindSel(tb, T);
     const tf = h('tr', null, h('td', { class: 'm-rn' }));
     for (const col of T.cols) {
       const kind = vs.agg[col.c] || (col.kind === 'text' ? 'count' : col.kind === 'date' ? 'count' : col.kind === 'pct' ? 'avg' : 'sum');
@@ -250,6 +263,7 @@ class Modern {
     const wrap = h('div', { class: 'm-card m-listwrap' }, h('div', { class: 'm-scrollx' }, tbl));
     if (!rows.length) wrap.append(h('div', { class: 'm-none', text: vs.q || vs.filters.length ? 'Aramaya / filtreye uyan kayıt yok' : 'Henüz kayıt yok' }));
     wrap.append(h('button', { class: 'm-addrow', html: icon('plus') + '<span>Yeni kayıt</span>', onclick: () => this.rowForm(T, null) }));
+    requestAnimationFrame(() => this.paintSel());
     return wrap;
   }
   // hücre rengi: önce hücrenin kendi biçimi, sonra renk kuralları
@@ -261,7 +275,123 @@ class Modern {
     if (st && st.bar != null) el.style.backgroundImage = `linear-gradient(90deg, ${st.barColor}55 ${(st.bar * 100).toFixed(1)}%, transparent ${(st.bar * 100).toFixed(1)}%)`;
     if (st && st.icon) el.prepend(h('span', { class: 'm-ico ' + st.icon, text: st.icon === 'up' ? '▲ ' : st.icon === 'mid' ? '● ' : '▼ ' }));
   }
-  editCell(td, T, r, col) {
+  // ---------- seçim: fareyle sürükle, dokunmatikte nokta-kutu ----------
+  selRect() { const m = this.msel; if (!m || m.si !== this.wb.active || !this._vr) return null; const n = this._vr.length - 1, k = this._vc.length - 1; if (n < 0) return null; const cl = (v, hi) => Math.max(0, Math.min(hi, v)); return { r1: cl(Math.min(m.a.ri, m.b.ri), n), r2: cl(Math.max(m.a.ri, m.b.ri), n), c1: cl(Math.min(m.a.ci, m.b.ci), k), c2: cl(Math.max(m.a.ci, m.b.ci), k) }; }
+  selCells() { const g = this.selRect(); if (!g) return []; const out = []; for (let i = g.r1; i <= g.r2; i++) for (let j = g.c1; j <= g.c2; j++) out.push({ ri: i, ci: j, r: this._vr[i], col: this._vc[j] }); return out; }
+  paintSel() {
+    const g = this.selRect(); const tb = this.body.querySelector('.m-t tbody'); if (!tb) { this.selBar(); return; }
+    U.$$('td.sel', tb).forEach(td => { td.classList.remove('sel', 'sel-a'); td.style.removeProperty('--st'); td.style.removeProperty('--sb'); td.style.removeProperty('--sl'); td.style.removeProperty('--sr'); });
+    if (!this._hdrag) U.$$('.m-handle', tb).forEach(x => x.remove());
+    if (g) {
+      for (let i = g.r1; i <= g.r2; i++) for (let j = g.c1; j <= g.c2; j++) {
+        const td = tb.querySelector(`td[data-ri="${i}"][data-ci="${j}"]`); if (!td) continue;
+        td.classList.add('sel'); if (i === this.msel.a.ri && j === this.msel.a.ci) td.classList.add('sel-a');
+        td.style.setProperty('--st', i === g.r1 ? 1 : 0); td.style.setProperty('--sb', i === g.r2 ? 1 : 0); td.style.setProperty('--sl', j === g.c1 ? 1 : 0); td.style.setProperty('--sr', j === g.c2 ? 1 : 0);
+        if (i === g.r2 && j === g.c2 && !this._hdrag) { const hd = h('span', { class: 'm-handle', title: 'Sürükleyerek seçimi genişletin' }); td.append(hd); this.bindHandle(hd); }
+      }
+    }
+    this.selBar();
+  }
+  cellAt(x, y) { const el = document.elementFromPoint(x, y); const td = el && el.closest && el.closest('td[data-ri]'); return td ? { ri: +td.dataset.ri, ci: +td.dataset.ci, td } : null; }
+  autoScroll(y, x) { const sc = this.body, rb = sc.getBoundingClientRect(); if (y > rb.bottom - 40) sc.scrollTop += 18; else if (y < rb.top + 60) sc.scrollTop -= 18; const sx = this.body.querySelector('.m-scrollx'); if (sx) { const rx = sx.getBoundingClientRect(); if (x > rx.right - 30) sx.scrollLeft += 18; else if (x < rx.left + 50) sx.scrollLeft -= 18; } }
+  bindHandle(hd) {
+    // nokta: parmakla / fareyle sürükleyince seçim büyür
+    hd.addEventListener('pointerdown', e => {
+      e.preventDefault(); e.stopPropagation(); this._hdrag = true; hd.style.visibility = 'hidden';
+      const move = ev => { ev.preventDefault(); const c = this.cellAt(ev.clientX, ev.clientY); if (c && (c.ri !== this.msel.b.ri || c.ci !== this.msel.b.ci)) { this.msel.b = { ri: c.ri, ci: c.ci }; this.paintSel(); } this.autoScroll(ev.clientY, ev.clientX); };
+      const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up); this._hdrag = false; this.paintSel(); };
+      addEventListener('pointermove', move, { passive: false }); addEventListener('pointerup', up); addEventListener('pointercancel', up);
+    });
+  }
+  bindSel(tb, T) {
+    const si = T.si;
+    tb.addEventListener('pointerdown', e => {
+      const td = e.target.closest('td[data-ri]'); if (!td || td.classList.contains('editing') || e.target.closest('.m-handle')) return;
+      const at = { ri: +td.dataset.ri, ci: +td.dataset.ci };
+      if (e.pointerType === 'mouse') {
+        if (e.button !== 0) return;
+        const g = this.selRect(); const wasOnly = g && g.r1 === g.r2 && g.c1 === g.c2 && g.r1 === at.ri && g.c1 === at.ci;
+        if (e.shiftKey && this.msel) { this.msel.b = at; this.paintSel(); return; }
+        this.msel = { si, a: at, b: { ...at } }; this.paintSel(); let moved = false;
+        const move = ev => { const c = this.cellAt(ev.clientX, ev.clientY); if (c && (c.ri !== this.msel.b.ri || c.ci !== this.msel.b.ci)) { moved = true; this.msel.b = { ri: c.ri, ci: c.ci }; this.paintSel(); } if (ev.buttons) this.autoScroll(ev.clientY, ev.clientX); };
+        const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); if (!moved && wasOnly) this.editAt(at); };
+        addEventListener('pointermove', move); addEventListener('pointerup', up);
+        return;
+      }
+      // dokunmatik: dokun = seç (seçiliyse düzenle), basılı tut = menü, kaydırma = sayfa kayar
+      const x0 = e.clientX, y0 = e.clientY; let gone = false;
+      const lp = setTimeout(() => { gone = true; if (!this.inSel(at)) { this.msel = { si, a: at, b: { ...at } }; this.paintSel(); } navigator.vibrate && navigator.vibrate(15); this.selMenu({ clientX: x0, clientY: y0 }); }, 550);
+      const move = ev => { if (Math.abs(ev.clientX - x0) > 8 || Math.abs(ev.clientY - y0) > 8) { gone = true; clearTimeout(lp); end(); } };
+      const up = () => { clearTimeout(lp); end(); if (gone) return; const g = this.selRect(); const wasOnly = g && g.r1 === g.r2 && g.c1 === g.c2 && g.r1 === at.ri && g.c1 === at.ci; if (wasOnly) this.editAt(at); else { this.msel = { si, a: at, b: { ...at } }; this.paintSel(); } };
+      const end = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', end); };
+      addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', end);
+    });
+    tb.addEventListener('dblclick', e => { const td = e.target.closest('td[data-ri]'); if (td) this.editAt({ ri: +td.dataset.ri, ci: +td.dataset.ci }); });
+    tb.addEventListener('contextmenu', e => { const td = e.target.closest('td[data-ri]'); if (!td) return; e.preventDefault(); const at = { ri: +td.dataset.ri, ci: +td.dataset.ci }; if (!this.inSel(at)) { this.msel = { si, a: at, b: { ...at } }; this.paintSel(); } this.selMenu(e); });
+  }
+  inSel(at) { const g = this.selRect(); return !!g && at.ri >= g.r1 && at.ri <= g.r2 && at.ci >= g.c1 && at.ci <= g.c2; }
+  editAt(at, text) { const td = this.body.querySelector(`.m-t td[data-ri="${at.ri}"][data-ci="${at.ci}"]`); if (td) this.editCell(td, this._vT, this._vr[at.ri], this._vc[at.ci], text); }
+  // alt çubuk: seçimin toplamı, ortalaması… (Excel'in durum çubuğu gibi)
+  selBar() {
+    let bar = $('#m-selbar'); const cells = this.view === 'list' ? this.selCells() : [];
+    if (!cells.length) { if (bar) bar.remove(); return; }
+    if (!bar) { bar = h('div', { id: 'm-selbar' }); document.body.append(bar); }
+    const wb = this.wb, si = this.wb.active; const nums = cells.map(c => wb.value(si, c.r, c.col.c)).filter(v => typeof v === 'number');
+    const nf = (cells.find(c => typeof wb.value(si, c.r, c.col.c) === 'number') || {}).col; const f = v => X.formatValue(v, (nf && nf.nf) || '#,##0.##');
+    const sum = nums.reduce((a, b) => a + b, 0);
+    const parts = [h('span', { class: 'm-sb-n', text: cells.length > 1 ? cells.length + ' hücre' : (cells[0].col.name) })];
+    if (nums.length) { parts.push(h('span', null, h('small', { text: 'Toplam' }), h('b', { text: f(sum) }))); if (nums.length > 1) parts.push(h('span', null, h('small', { text: 'Ortalama' }), h('b', { text: f(sum / nums.length) })), h('span', { class: 'm-sb-x' }, h('small', { text: 'En küçük' }), h('b', { text: f(Math.min(...nums)) })), h('span', { class: 'm-sb-x' }, h('small', { text: 'En büyük' }), h('b', { text: f(Math.max(...nums)) }))); }
+    else parts.push(h('span', null, h('small', { text: 'Dolu' }), h('b', { text: String(cells.filter(c => { const v = wb.value(si, c.r, c.col.c); return v != null && v !== ''; }).length) })));
+    bar.innerHTML = ''; bar.append(...parts, h('button', { class: 'm-sb-btn', html: icon('dots'), title: 'Seçenekler', 'aria-label': 'Seçenekler', onclick: e => this.selMenu(e.currentTarget) }), h('button', { class: 'm-sb-btn', html: icon('x'), title: 'Seçimi bırak', 'aria-label': 'Seçimi bırak', onclick: () => { this.msel = null; this.paintSel(); } }));
+  }
+  selTSV() { const g = this.selRect(); if (!g) return ''; const wb = this.wb, si = wb.active; const lines = []; for (let i = g.r1; i <= g.r2; i++) { const row = []; for (let j = g.c1; j <= g.c2; j++) row.push(wb.display(si, this._vr[i], this._vc[j].c)); lines.push(row.join('\t')); } return lines.join('\n'); }
+  async selCopy() { const t = this.selTSV(); try { await navigator.clipboard.writeText(t); U.toast('✓ Kopyalandı'); } catch (e) { U.toast('Kopyalamak için Ctrl+C kullanın'); } }
+  selPaste(text) {
+    const g = this.selRect(); if (!g || !text) return; const wb = this.wb, si = wb.active; const T = this._vT;
+    const grid = text.replace(/\r/g, '').replace(/\n$/, '').split('\n').map(l => l.split('\t'));
+    let skipped = 0; wb.begin();
+    grid.forEach((row, i) => row.forEach((v, j) => { const ri = g.r1 + i, ci = g.c1 + j; if (ri >= this._vr.length || ci >= this._vc.length) return; const col = this._vc[ci]; if (col.computed) { skipped++; return; } this.commitInput(si, this._vr[ri], col.c, v); }));
+    wb.end(); U.toast('✓ Yapıştırıldı' + (skipped ? ' (' + skipped + ' hesaplanan hücre atlandı)' : ''));
+  }
+  async selClear() {
+    const cells = this.selCells().filter(c => !c.col.computed); if (!cells.length) { U.toast('Hesaplanan hücreler silinmez'); return; }
+    if (cells.length > 20 && !await U.confirm(cells.length + ' hücrenin içi temizlensin mi?', 'Temizle', 'Temizle')) return;
+    const wb = this.wb, si = wb.active; wb.begin(); cells.forEach(c => wb.patchCell(si, c.r, c.col.c, { v: null, f: null })); wb.end();
+  }
+  selMenu(at) {
+    const cells = this.selCells(); if (!cells.length) return; const wb = this.wb, si = wb.active, T = this._vT, vs = this.vsCur;
+    const anchor = at && at.getBoundingClientRect ? at : { left: at.clientX, right: at.clientX, top: at.clientY, bottom: at.clientY };
+    const g = this.selRect(); const one = cells.length === 1; const c0 = cells[0]; const rowsSel = [...new Set(cells.map(c => c.r))]; const colsSel = [...new Set(cells.map(c => c.col))];
+    const nums = cells.map(c => wb.value(si, c.r, c.col.c)).filter(v => typeof v === 'number'); const sum = nums.reduce((a, b) => a + b, 0);
+    const setAll = patch => { wb.begin(); cells.forEach(c => wb.setStyle(si, c.r, c.col.c, patch)); wb.end(); };
+    const sub = items => setTimeout(() => U.menu(anchor, items), 10);
+    const disp = wb.display(si, c0.r, c0.col.c);
+    U.menu(anchor, [
+      { head: one ? c0.col.name + ': ' + (disp || 'boş') : cells.length + ' hücre seçili' + (nums.length ? ' · Toplam ' + X.formatValue(sum, (colsSel.find(c => c.kind !== 'text') || {}).nf || '#,##0.##') : '') },
+      ...(one && !c0.col.computed ? [{ text: 'Düzenle', icon: 'rules', onClick: () => this.editAt({ ri: g.r1, ci: g.c1 }) }] : []),
+      { text: 'Kopyala', icon: 'copy', kbd: 'Ctrl+C', onClick: () => this.selCopy() },
+      { text: 'Yapıştır', icon: 'paste', kbd: 'Ctrl+V', onClick: async () => { try { this.selPaste(await navigator.clipboard.readText()); } catch (e) { U.toast('Yapıştırmak için Ctrl+V kullanın'); } } },
+      ...(nums.length > 1 ? [{ text: 'Toplamı kopyala (' + X.formatValue(sum, '#,##0.##') + ')', icon: 'sigma', onClick: async () => { try { await navigator.clipboard.writeText(X.formatValue(sum, '0.##')); U.toast('✓ Toplam kopyalandı'); } catch (e) { } } }] : []),
+      { text: 'İçini temizle', icon: 'eraser', kbd: 'Delete', onClick: () => this.selClear() },
+      { sep: 1 },
+      { text: 'Biçim ▸', icon: 'hash', onClick: () => sub(KINDS.map(([k, t, b]) => ({ text: b + '  ' + t, onClick: () => setAll({ nf: KIND_NF[k] }) }))) },
+      { text: 'Renk ▸', icon: 'fill', onClick: () => sub([...TONES.map(t => ({ text: t[0], swatch: t[1], onClick: () => setAll({ bg: t[1], fc: t[2] }) })), { sep: 1 }, { text: 'Rengi kaldır', icon: 'eraser', onClick: () => setAll({ bg: null, fc: null }) }]) },
+      { text: 'Kalın', icon: 'bold', onClick: () => { const b = !((wb.cell(si, c0.r, c0.col.c) || {}).s || {}).b; setAll({ b: b ? 1 : null }); } },
+      { sep: 1 },
+      ...(one && disp ? [{ text: 'Sadece “' + disp + '” olanları göster', icon: 'filter', onClick: () => { vs.filters.push({ c: c0.col.c, op: '=', val: disp }); this.msel = null; this.render(); } }, { text: '“' + disp + '” olmayanları göster', icon: 'eyeOff', onClick: () => { vs.filters.push({ c: c0.col.c, op: '<>', val: disp }); this.msel = null; this.render(); } }] : []),
+      { text: 'Küçükten büyüğe sırala', icon: 'sortA', onClick: () => { vs.sort = { c: c0.col.c, dir: 1 }; this.msel = null; this.render(); } },
+      { text: 'Büyükten küçüğe sırala', icon: 'sortD', onClick: () => { vs.sort = { c: c0.col.c, dir: -1 }; this.msel = null; this.render(); } },
+      { sep: 1 },
+      { text: 'Seçimden grafik yap', icon: 'chart', onClick: () => { const lab = colsSel.find(c => c.kind === 'text' || c.kind === 'date') || T.cols.find(c => c.kind === 'text') || T.cols[0]; const vals = colsSel.filter(c => c.kind !== 'text' && c.kind !== 'date').map(c => ({ c: c.c, op: 'sum' })); this.chartWizard(T, null, { lab: lab.c, labMode: lab.kind === 'date' ? 'month' : 'value', vals: vals.length ? vals : [{ c: -1, op: 'count' }], conds: rowsSel.length < this._vr.length && rowsSel.length > 1 ? [] : [] }); } },
+      { text: 'Bu sütunla hesapla…', icon: 'wand', onClick: () => { this.focusCol(T, c0.col.c); this.wiz.openRecipes(); } },
+      { text: 'Renk kuralı…', icon: 'rules', onClick: () => this.colorDialog(T, c0.col) },
+      { sep: 1 },
+      ...(rowsSel.length === 1 ? [{ text: 'Kaydı aç', icon: 'file', onClick: () => this.rowForm(T, c0.r) }] : []),
+      { text: rowsSel.length > 1 ? rowsSel.length + ' kaydı sil' : 'Kaydı sil', icon: 'trash', danger: 1, onClick: async () => { if (!await U.confirm(rowsSel.length + ' kayıt (satır) silinsin mi? Geri al ile geri getirebilirsiniz.', 'Kayıt sil', 'Sil')) return; wb.begin(); rowsSel.slice().sort((a, b) => b - a).forEach(r => wb.shift(si, 'r', r, -1)); wb.end(); this.msel = null; this.render(); } },
+      { text: 'Yeni kayıt ekle', icon: 'plus', onClick: () => this.rowForm(T, null) }
+    ]);
+  }
+  editCell(td, T, r, col, startText) {
     const wb = this.wb, si = T.si; const cell = wb.cell(si, r, col.c);
     if (X.isErr(wb.value(si, r, col.c)) && this.errHint(si, r, col.c)) return;
     if (col.computed || (cell && cell.f != null) || (!cell && wb.spillAt(si, r, col.c))) {
@@ -270,15 +400,15 @@ class Modern {
     }
     if (td.querySelector('input')) return;
     const old = wb.editText(si, r, col.c);
-    const inp = h('input', { class: 'm-cellinp', value: old });
+    const inp = h('input', { class: 'm-cellinp', value: startText != null ? startText : old });
     const list = this.choices(T, col);
-    td.textContent = ''; td.classList.add('editing'); td.append(inp); inp.focus(); inp.select();
+    td.textContent = ''; td.classList.add('editing'); td.append(inp); inp.focus(); if (startText == null) inp.select();
     if (list.length && list.length <= 12 && col.kind === 'text') {
       const dl = h('datalist', { id: 'm-dl' }, ...list.map(v => h('option', { value: v }))); td.append(dl); inp.setAttribute('list', 'm-dl');
     }
     let done = false;
     const finish = ok => { if (done) return; done = true; if (ok && inp.value !== old) { if (!this.commitInput(si, r, col.c, inp.value)) this.render(); } else this.render(); };
-    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); finish(true); } else if (e.key === 'Escape') finish(false); });
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); finish(true); if (this.msel) { const a = this.msel.a; const n = e.key === 'Tab' ? { ri: a.ri, ci: Math.min(this._vc.length - 1, a.ci + 1) } : { ri: Math.min(this._vr.length - 1, a.ri + 1), ci: a.ci }; this.msel = { si: this.msel.si, a: n, b: { ...n } }; } } else if (e.key === 'Escape') finish(false); });
     inp.addEventListener('blur', () => finish(true));
   }
   errHint(si, r, c) {
@@ -657,10 +787,10 @@ class Modern {
     return wrap;
   }
   // Yeni grafik: Bul ve getir gibi adım adım seç, canlı önizle, tahmin ekle
-  chartWizard(T, edit) {
+  chartWizard(T, edit, preset) {
     const wb = this.wb, si = T.si, sh = wb.sheets[si]; const theme = this.chartTheme();
     const textCols = T.cols.filter(c => c.kind === 'text' || c.kind === 'date'), numCols = T.cols.filter(c => c.kind !== 'text' && c.kind !== 'date');
-    const q = edit ? JSON.parse(JSON.stringify(edit.q)) : { lab: (T.cols.find(c => c.kind === 'text') || textCols[0] || T.cols[0]).c, labMode: 'value', vals: numCols.length ? [{ c: numCols[numCols.length - 1].c, op: 'sum' }] : [{ c: -1, op: 'count' }], conds: [], sort: 'none', top: 0, fc: 0, trend: false };
+    const q = edit ? JSON.parse(JSON.stringify(edit.q)) : preset ? Object.assign({ conds: [], sort: 'none', top: 0, fc: 0, trend: false }, preset) : { lab: (T.cols.find(c => c.kind === 'text') || textCols[0] || T.cols[0]).c, labMode: 'value', vals: numCols.length ? [{ c: numCols[numCols.length - 1].c, op: 'sum' }] : [{ c: -1, op: 'count' }], conds: [], sort: 'none', top: 0, fc: 0, trend: false };
     let type = edit ? edit.type : 'column', title = edit ? edit.title : '', autoTitle = !edit;
     const body = h('div', { class: 'form m-look m-cw' });
     const cv = h('canvas', { class: 'm-chartcv' });
