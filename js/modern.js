@@ -14,7 +14,8 @@ const DB = {
   async tx(mode, fn) { const work = (async () => { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction('docs', mode); const st = t.objectStore('docs'); const rq = fn(st); t.oncomplete = () => res(rq && rq.result); t.onerror = () => rej(t.error); }); })(); return Promise.race([work, new Promise((_, rej) => setTimeout(() => rej(new Error('zaman aşımı')), 3000))]); },
   put(d) { return this.tx('readwrite', s => s.put(d)).catch(e => { try { localStorage.setItem('excello.doc.' + d.id, JSON.stringify(d)); } catch (e2) { throw e; } }); },
   get(id) { return this.tx('readonly', s => s.get(id)).then(r => r || JSON.parse(localStorage.getItem('excello.doc.' + id) || 'null')).catch(() => JSON.parse(localStorage.getItem('excello.doc.' + id) || 'null')); },
-  all() { return this.tx('readonly', s => s.getAll()); }
+  all() { return this.tx('readonly', s => s.getAll()); },
+  del(id) { try { localStorage.removeItem('excello.doc.' + id); } catch (e) { } return this.tx('readwrite', s => s.delete(id)); }
 };
 
 // sütun türleri
@@ -192,6 +193,7 @@ class Modern {
       h('div', { class: 'm-titlebox' },
         h('input', { class: 'm-title', value: sh.name, 'aria-label': 'Tablo adı', onchange: e => { const v = e.target.value.trim(); if (v && v !== sh.name) { if (wb.sheetIndex(v) >= 0) { U.toast('Bu adda bir tablo var'); e.target.value = sh.name; return; } wb.renameSheet(wb.active, v); } } }),
         h('small', { class: 'm-sub', text: n + ' kayıt · ' + T.cols.length + ' sütun' + (this._saved ? ' · ' + this._saved : '') })),
+      h('button', { class: 'ic m-tmore', html: icon('dots'), title: 'Tablo işlemleri', 'aria-label': 'Tablo işlemleri', onclick: e => this.sheetMenu(e.currentTarget, wb.active) }),
       h('div', { class: 'spacer' }),
       h('button', { class: 'ic', html: icon('undo'), title: 'Geri al', disabled: !wb.undoS.length, onclick: () => wb.undo() }),
       h('button', { class: 'ic', html: icon('redo'), title: 'Yinele', disabled: !wb.redoS.length, onclick: () => wb.redo() }),
@@ -601,8 +603,17 @@ class Modern {
     const wb = this.wb;
     U.menu(anchor, [
       { text: 'Adını değiştir', icon: 'tag', onClick: async () => { const v = await U.prompt('Tablo adı', wb.sheets[i].name); if (v && v.trim() && wb.sheetIndex(v.trim()) < 0) wb.renameSheet(i, v.trim()); } },
-      { text: 'Sil', icon: 'trash', danger: 1, disabled: wb.sheets.length < 2, onClick: async () => { if (await U.confirm('“' + wb.sheets[i].name + '” tablosu silinsin mi?', 'Tabloyu sil', 'Sil')) { wb.removeSheet(i); if (wb.active >= wb.sheets.length) wb.active = wb.sheets.length - 1; this.render(); } } }
+      { text: 'Tabloyu sil', icon: 'trash', danger: 1, onClick: () => this.deleteTable(i) }
     ]);
+  }
+  async deleteTable(i) {
+    const wb = this.wb, sh = wb.sheets[i]; const n = Math.max(0, this.table(i).r2 - this.table(i).r0 + 1);
+    const ok = await U.confirm('“' + sh.name + '” tablosu ve içindeki ' + n + ' kayıt silinsin mi?' + (wb.sheets.length < 2 ? ' Yerine boş bir tablo açılır.' : '') + ' Yanlışlıkla silerseniz sağ üstteki geri al düğmesiyle geri getirebilirsiniz.', 'Tabloyu sil', 'Sil');
+    if (!ok) return;
+    wb.begin();
+    if (wb.sheets.length < 2) { let nm = 'Tablo 1', k = 2; while (wb.sheetIndex(nm) >= 0) nm = 'Tablo ' + k++; wb.addSheet(nm); }
+    wb.removeSheet(i); if (wb.active >= wb.sheets.length) wb.active = wb.sheets.length - 1;
+    wb.end(); delete this.vs[i]; this.render(); U.toast('✓ Tablo silindi');
   }
   async newTable() {
     const v = await U.prompt('Yeni tablo', '', 'Tablonun adı (Ör: Müşteriler, Giderler)'); if (v == null) return;
@@ -703,7 +714,18 @@ class Modern {
     list.sort((a, b) => b.updated - a.updated);
     const body = h('div', { class: 'm-recent' });
     if (!list.length) body.append(h('p', { class: 'hint', text: 'Bu cihazda kayıtlı çalışma yok.' }));
-    list.slice(0, 30).forEach(doc => body.append(h('button', { class: 'm-opt', onclick: () => { d.close(); this.saveLocal(); const wb = M.Workbook.fromJSON(doc.data); wb.format = doc.format || 'xlsx'; this.docId = doc.id; LS.set('cur', doc.id); this.vs = {}; this.attach(wb); } }, h('span', { class: 'm-opt-ic', html: icon('file') }), h('span', null, h('b', { text: doc.name || 'Çalışma' }), h('small', { text: new Date(doc.updated).toLocaleString('tr-TR') })))));
+    list.slice(0, 50).forEach(doc => {
+      const cur = doc.id === this.docId;
+      const row = h('div', { class: 'm-recrow' },
+        h('button', { class: 'm-opt', onclick: () => { d.close(); if (cur) return; this.saveLocal(); const wb = M.Workbook.fromJSON(doc.data); wb.format = doc.format || 'xlsx'; this.docId = doc.id; LS.set('cur', doc.id); this.vs = {}; this.attach(wb); } }, h('span', { class: 'm-opt-ic', html: icon('file') }), h('span', null, h('b', { text: (doc.name || 'Çalışma') + (cur ? ' (açık)' : '') }), h('small', { text: new Date(doc.updated).toLocaleString('tr-TR') }))),
+        h('button', { class: 'ic m-recdel', html: icon('trash'), title: 'Çalışmayı sil', 'aria-label': 'Çalışmayı sil', onclick: async () => {
+          if (!await U.confirm('“' + (doc.name || 'Çalışma') + '” çalışması bu cihazdan tamamen silinsin mi? Bu geri alınamaz. (Daha önce Excel olarak kaydettiğiniz dosyalar silinmez.)', 'Çalışmayı sil', 'Sil')) return;
+          try { await DB.del(doc.id); } catch (e) { }
+          row.remove(); U.toast('✓ Silindi');
+          if (cur) { const wb = new M.Workbook(); wb.name = 'Yeni Çalışma'; wb.sheets[0].name = 'Tablo 1'; this.docId = this.newId(); LS.set('cur', this.docId); this.vs = {}; this.attach(wb); this.saveLocal(); }
+        } }));
+      body.append(row);
+    });
     const d = U.dialog({ title: icon('layers') + ' Son çalışmalar', body, buttons: [{ text: 'Kapat', value: null }] });
   }
   busy(msg) { const el = h('div', { class: 'busy' }, h('div', { class: 'spin' }), h('span', { text: msg })); document.body.append(el); return () => el.remove(); }

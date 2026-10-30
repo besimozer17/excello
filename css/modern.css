@@ -217,3 +217,10 @@ html.dark .m-rcard dd.m-fx { color: #f9a8d4; }
 .m-rcard dd .m-pill { background: transparent; padding: 0; border-radius: 6px; }
 .m-rcard dd .m-pill[style*="background"] { padding: 2px 8px; }
 @media (max-width: 600px) { .m-cond { grid-template-columns: 1fr 1fr; } .m-cond-l { grid-column: 1 / -1; } }
+
+/* silme düğmeleri: dokunmatik ekranda her zaman görünür */
+@media (pointer: coarse) { .m-tab-more { opacity: .7; } }
+.m-tmore { margin-left: 2px; }
+.m-recrow { display: flex; align-items: center; gap: 6px; }
+.m-recrow .m-opt { flex: 1; margin-bottom: 8px; }
+.m-recdel { color: var(--danger); margin-bottom: 8px; }
