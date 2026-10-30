@@ -7,6 +7,7 @@ const TYPES = [['column', 'Sütun'], ['bar', 'Çubuk'], ['line', 'Çizgi'], ['ar
 
 // Alandan seri verisi çıkar
 function extract(model, si, g, lr) {
+  if (g && g.q) return query(model, si, g.q);
   if (g && g.range) { lr = g.lr; g = g.range; }
   const vals = model.values(si, g.r1, g.c1, g.r2, g.c2);
   const disp = (r, c) => model.display(si, g.r1 + r, g.c1 + c);
@@ -28,6 +29,80 @@ function extract(model, si, g, lr) {
   return { labels, series };
 }
 
+// ---------- sorgulu grafik: grupla, koşulla süz, topla, tahmin et ----------
+const AGG = { sum: 'Toplam', avg: 'Ortalama', count: 'Sayı', max: 'En büyük', min: 'En küçük' };
+const MONTHS = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+const lc = v => String(v == null ? '' : v).toLocaleLowerCase('tr-TR');
+function dataRows(model, si) {
+  const d = model.dims(si); const rows = [];
+  const total = r => { for (let c = 0; c < d.cols; c++) { const v = model.value(si, r, c), cl = model.cell(si, r, c); if (typeof v === 'string' && /^(genel\s+)?(toplam|total|ara toplam)/i.test(v.trim())) return true; if (cl && cl.f && /^(SUM|SUBTOTAL)\(/.test(cl.f)) return true; } return false; };
+  for (let r = 1; r < d.rows; r++) { let any = false; for (let c = 0; c < d.cols; c++) { const v = model.value(si, r, c); if (v != null && v !== '') { any = true; break; } } if (any && !total(r)) rows.push(r); }
+  return rows;
+}
+function condTest(model, si, r, f) {
+  const v = model.value(si, r, f.c), d = model.display(si, r, f.c);
+  if (f.op === 'empty') return v == null || v === ''; if (f.op === 'filled') return !(v == null || v === '');
+  const n = X.parseNumLoose(String(f.val)); const dt = X.parseDateLoose(String(f.val));
+  const cmp = typeof v === 'number' ? (n != null ? n : dt ? dt.v : null) : null;
+  if (f.op === 'contains') return lc(d).includes(lc(f.val));
+  if (cmp != null) { switch (f.op) { case '=': return v === cmp; case '<>': return v !== cmp; case '>': return v > cmp; case '<': return v < cmp; case '>=': return v >= cmp; case '<=': return v <= cmp; } }
+  const a = lc(d), b = lc(f.val); if (f.op === '=') return a === b; if (f.op === '<>') return a !== b;
+  const k = a.localeCompare(b, 'tr'); return f.op === '>' ? k > 0 : f.op === '<' ? k < 0 : f.op === '>=' ? k >= 0 : k <= 0;
+}
+function linFit(ys) {
+  // TAHMİN.DOĞRUSAL ile aynı: en küçük kareler (x = 1, 2, 3 …)
+  const p = ys.map((y, i) => [i + 1, y]).filter(q => q[1] != null); const n = p.length; if (n < 2) return null;
+  const mx = p.reduce((a, q) => a + q[0], 0) / n, my = p.reduce((a, q) => a + q[1], 0) / n;
+  let sxy = 0, sxx = 0; p.forEach(([x, y]) => { sxy += (x - mx) * (y - my); sxx += (x - mx) * (x - mx); });
+  const b = sxx ? sxy / sxx : 0; return { a: my - b * mx, b, at: x => my - b * mx + b * x };
+}
+function query(model, si, q) {
+  const rows = dataRows(model, si).filter(r => (q.conds || []).every(f => condTest(model, si, r, f)));
+  const nf = model.numFmt(si, 1, q.lab) || '';
+  const isDate = X.isDateFormat(nf);
+  const keyOf = r => {
+    const v = model.value(si, r, q.lab);
+    if (isDate && typeof v === 'number' && (q.labMode === 'month' || q.labMode === 'year')) { const dt = X.serialToDate(Math.floor(v)); const y = dt.getUTCFullYear(), m = dt.getUTCMonth(); return q.labMode === 'year' ? { k: y, t: String(y), o: y } : { k: y * 12 + m, t: MONTHS[m] + ' ' + y, o: y * 12 + m }; }
+    const t = model.display(si, r, q.lab) || '(boş)'; return { k: lc(t), t, o: typeof v === 'number' ? v : null };
+  };
+  const groups = new Map();
+  rows.forEach(r => { const k = keyOf(r); if (!groups.has(k.k)) groups.set(k.k, { t: k.t, o: k.o, rows: [] }); groups.get(k.k).rows.push(r); });
+  let list = [...groups.values()];
+  const vals = (q.vals && q.vals.length ? q.vals : [{ c: -1, op: 'count' }]);
+  const aggOf = (g, v) => {
+    if (v.op === 'count') return v.c < 0 ? g.rows.length : g.rows.filter(r => { const x = model.value(si, r, v.c); return x != null && x !== ''; }).length;
+    const ns = g.rows.map(r => model.value(si, r, v.c)).filter(x => typeof x === 'number'); if (!ns.length) return null;
+    if (v.op === 'avg') return ns.reduce((a, b) => a + b, 0) / ns.length; if (v.op === 'max') return Math.max(...ns); if (v.op === 'min') return Math.min(...ns); return ns.reduce((a, b) => a + b, 0);
+  };
+  list.forEach(g => g.v = vals.map(v => aggOf(g, v)));
+  const chrono = list.every(g => g.o != null);
+  if (q.sort === 'desc') list.sort((a, b) => (b.v[0] || 0) - (a.v[0] || 0));
+  else if (q.sort === 'asc') list.sort((a, b) => (a.v[0] || 0) - (b.v[0] || 0));
+  else if (q.sort === 'label') list.sort((a, b) => chrono ? a.o - b.o : a.t.localeCompare(b.t, 'tr'));
+  else if (chrono && (isDate || q.fc)) list.sort((a, b) => a.o - b.o);
+  if (q.top > 0) list = list.slice(0, q.top);
+  const labels = list.map(g => g.t);
+  const series = vals.map((v, j) => ({ name: (AGG[v.op] || '') + (v.c >= 0 ? ' ' + (model.display(si, 0, v.c) || X.colName(v.c)) : ''), values: list.map(g => g.v[j]), fmt: v.op === 'count' ? null : model.numFmt(si, 1, v.c) }));
+  const out = { labels, series, forecast: null };
+  // eğilim ve tahmin (ilk değer serisine göre)
+  const fit = (q.fc > 0 || q.trend) && series[0] ? linFit(series[0].values) : null;
+  if (fit && q.trend) series.push({ name: 'Eğilim', values: labels.map((_, i) => fit.at(i + 1)), line: true, dash: true, color: '#94a3b8', fmt: series[0].fmt });
+  if (fit && q.fc > 0) {
+    const n = labels.length, fut = [];
+    for (let i = 1; i <= q.fc; i++) {
+      let t = 'Tahmin ' + i; const last = list[n - 1];
+      if (last && last.o != null && isDate && q.labMode === 'month') { const m = last.o + i; t = MONTHS[m % 12] + ' ' + Math.floor(m / 12); }
+      else if (last && last.o != null && isDate && n > 1 && list[0].o != null) { const step = Math.max(1, Math.round((last.o - list[0].o) / (n - 1))); t = X.formatValue(last.o + step * i, nf); }
+      else if (last && last.o != null && (q.labMode === 'year' || (!isDate && Number.isInteger(last.o)))) { const step = n > 1 && list[n - 2].o != null ? last.o - list[n - 2].o : 1; t = String(last.o + step * i); }
+      fut.push({ t, v: fit.at(n + i) });
+    }
+    fut.forEach(f => { labels.push(f.t); series.forEach(s => s.values.push(s.line ? fit.at(labels.length) : null)); });
+    series.push({ name: 'Tahmin', values: labels.map((_, i) => i < n - 1 ? null : i === n - 1 ? series[0].values[n - 1] : fut[i - n].v), dash: true, ghost: true, overlay: true, color: '#f59e0b', fmt: series[0].fmt });
+    out.forecast = { items: fut, slope: fit.b, fmt: series[0].fmt };
+  }
+  return out;
+}
+
 function niceStep(range, n) { const raw = range / n; const p = Math.pow(10, Math.floor(Math.log10(raw))); const m = raw / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p; }
 function short(v) { const a = Math.abs(v); if (a >= 1e9) return X.fmtGeneral(+(v / 1e9).toFixed(1)) + ' Mr'; if (a >= 1e6) return X.fmtGeneral(+(v / 1e6).toFixed(1)) + ' Mn'; if (a >= 1e4) return X.fmtGeneral(+(v / 1e3).toFixed(1)) + ' B'; return X.formatValue(v, Number.isInteger(v) ? '#,##0' : '#,##0.##'); }
 
@@ -45,7 +120,7 @@ function draw(cv, spec, data, theme) {
   if (!S.length) { ctx.fillStyle = th.muted; ctx.font = `13px ${th.font}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Grafik için sayısal veri seçin', W / 2, H / 2); return; }
   // gösterge
   const pieLike = type === 'pie' || type === 'doughnut';
-  const legendItems = pieLike ? data.labels.map((l, i) => [l, colors[i % colors.length]]) : S.map((s, i) => [s.name, colors[i % colors.length]]);
+  const legendItems = pieLike ? data.labels.map((l, i) => [l, colors[i % colors.length]]) : S.map((s, i) => [s.name, s.color || colors[i % colors.length]]);
   ctx.font = `12px ${th.font}`; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
   let lx = 12, ly = top, legendH = 0;
   if (legendItems.length > 1 || pieLike) {
@@ -97,33 +172,37 @@ function draw(cv, spec, data, theme) {
   ctx.fillStyle = th.muted; const every = Math.max(1, Math.ceil(n / Math.max(1, Math.floor((horiz ? (y1 - y0) / 16 : (x1 - x0) / 56)))));
   data.labels.forEach((l, i) => { if (i % every) return; const c = (horiz ? y0 : x0) + band * (i + 0.5); if (horiz) { ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillText(l, x0 - 6, c, labelW - 6); } else { ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText(l, c, y1 + 5, band * every - 4); } });
   if (type === 'column' || type === 'bar' || type === 'stacked') {
-    const k = stacked ? 1 : S.length; const gap = band * 0.2; const bw = Math.max(1, (band - gap * 2) / k);
+    const BS = S.filter(s => !s.line); const k = stacked ? 1 : Math.max(1, BS.filter(s => !s.overlay).length); const gap = band * 0.2; const bw = Math.max(1, (band - gap * 2) / k);
     const base = scale(Math.max(lo, Math.min(0, hi)));
     data.labels.forEach((_, i) => {
       let pos = 0, neg = 0;
-      S.forEach((s, j) => {
-        const v = s.values[i]; if (v == null) return;
-        const st = (horiz ? y0 : x0) + band * i + gap + (stacked ? 0 : bw * j);
+      let slot = 0;
+      BS.forEach((s, j) => {
+        const v = s.values[i]; const my = s.overlay ? 0 : slot++; if (v == null) return;
+        if (s.overlay && BS.some(o => o !== s && !o.overlay && o.values[i] != null)) return;
+        const st = (horiz ? y0 : x0) + band * i + gap + (stacked ? 0 : bw * my);
         let a, b;
         if (stacked) { if (v >= 0) { a = scale(pos); b = scale(pos + v); pos += v; } else { a = scale(neg); b = scale(neg + v); neg += v; } } else { a = base; b = scale(v); }
-        ctx.fillStyle = colors[j % colors.length];
+        ctx.fillStyle = s.color || colors[S.indexOf(s) % colors.length];
         const r = Math.min(4, bw / 3);
         if (horiz) roundRect(ctx, Math.min(a, b), st + 1, Math.abs(b - a), bw - 2, r); else roundRect(ctx, st + 1, Math.min(a, b), bw - 2, Math.abs(b - a), r);
-        ctx.fill();
+        if (s.ghost) { ctx.globalAlpha = 0.45; ctx.fill(); ctx.globalAlpha = 1; ctx.setLineDash([4, 3]); ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1.5; ctx.stroke(); ctx.setLineDash([]); } else ctx.fill();
       });
     });
-    if (spec.labels && !stacked && S.length === 1 && n <= 24) {
+    // sütun grafiğinin üstünde eğilim çizgisi
+    if (!horiz) S.filter(s => s.line).forEach(s => { const pts = []; s.values.forEach((v, i) => { if (v != null) pts.push([x0 + band * (i + 0.5), scale(v)]); }); if (pts.length < 2) return; ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.strokeStyle = s.color || '#94a3b8'; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.stroke(); ctx.setLineDash([]); });
+    if (spec.labels && !stacked && k === 1 && n <= 24) {
       ctx.fillStyle = th.fg; ctx.font = `600 11px ${th.font}`;
-      S[0].values.forEach((v, i) => { if (v == null) return; const c = (horiz ? y0 : x0) + band * (i + 0.5); if (horiz) { ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(short(v), scale(v) + 4, c); } else { ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText(short(v), c, scale(v) - 3); } });
+      data.labels.map((_, i) => { const s = BS.find(x => !x.overlay && x.values[i] != null) || BS.find(x => x.values[i] != null); return s ? s.values[i] : null; }).forEach((v, i) => { if (v == null) return; const c = (horiz ? y0 : x0) + band * (i + 0.5); if (horiz) { ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(short(v), scale(v) + 4, c); } else { ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText(short(v), c, scale(v) - 3); } });
     }
   } else {
     S.forEach((s, j) => {
-      const col = colors[j % colors.length]; const pts = [];
+      const col = s.color || colors[j % colors.length]; const pts = [];
       s.values.forEach((v, i) => { if (v != null) pts.push([x0 + band * (i + 0.5), scale(v)]); });
       if (!pts.length) return;
       if (type === 'scatter') { ctx.fillStyle = col; pts.forEach(([x, y]) => { ctx.beginPath(); ctx.arc(x, y, 4, 0, 7); ctx.fill(); }); return; }
       if (type === 'area') { ctx.beginPath(); ctx.moveTo(pts[0][0], scale(Math.max(lo, 0))); pts.forEach(([x, y]) => ctx.lineTo(x, y)); ctx.lineTo(pts[pts.length - 1][0], scale(Math.max(lo, 0))); ctx.closePath(); ctx.globalAlpha = 0.25; ctx.fillStyle = col; ctx.fill(); ctx.globalAlpha = 1; }
-      ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.strokeStyle = col; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.stroke();
+      ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.strokeStyle = col; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; if (s.dash) ctx.setLineDash([7, 5]); ctx.stroke(); ctx.setLineDash([]);
       if (pts.length <= 40) { ctx.fillStyle = th.bg; pts.forEach(([x, y]) => { ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 7); ctx.fill(); ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.stroke(); }); }
     });
   }
@@ -137,5 +216,5 @@ function toPNG(spec, data, w, h) {
   const old = G.devicePixelRatio; draw(cv, spec, data);
   return cv.toDataURL('image/png');
 }
-G.XC = { extract, draw, toPNG, TYPES, COLORS };
+G.XC = { extract, draw, toPNG, query, condTest, linFit, AGG, TYPES, COLORS };
 })(window);

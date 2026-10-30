@@ -85,6 +85,8 @@ const RECIPES = [
   { g: 'Liste ve Özet', id: 'topn', icon: 'sortD', t: 'En büyük / en küçük N kayıt', d: 'Ör: en çok satış yapılan 5 satırı listeler.', multi: 1, f: [F('col', 'Hangi sütuna göre?', 'range', { kind: 'num' }), F('n', 'Kaç kayıt?', 'cellnum', { def: '5' }), F('dir', 'Hangileri?', 'select', { opts: [['-1', 'En büyükler'], ['1', 'En küçükler']] })],
     m: (v, t) => [{ dc: 0, f: 'TAKE(SORTBY(' + absRef(t.dataRef) + ',' + absRef(v.col) + ',' + (v.dir || -1) + '),' + valExpr(v.n, true) + ')', hdAll: 1 }] },
   { g: 'Liste ve Özet', id: 'cntu', icon: 'hash', t: 'Kaç farklı değer var?', d: 'Ör: tabloda kaç farklı şehir var.', agg: 1, f: [F('col', 'Hangi sütun?', 'range', { sel: 1 })], b: v => 'COUNTA(UNIQUE(' + v.col + '))' },
+  { g: 'Liste ve Özet', id: 'fcast', icon: 'line', t: 'Gelecek tahmini (TAHMİN)', nfFrom: 'y', d: 'Geçmiş değerlerin eğilimine bakarak sonraki dönemi tahmin eder. Ör: son aylara göre gelecek ayın satışı.', agg: 1, f: [F('y', 'Hangi değerler? (geçmiş)', 'range', { kind: 'num' }), F('x', 'Zaman sütunu (isteğe bağlı: tarih / ay no)', 'range', { kind: 'date' }), F('n', 'Kaç dönem sonrası?', 'cellnum', { def: '1' })],
+    b: v => { const y = absRef(v.y), n = valExpr(v.n, true) || '1'; if (!v.x) return `FORECAST.LINEAR(ROWS(${y})+${n},${y},SEQUENCE(ROWS(${y})))`; const x = absRef(v.x); return `FORECAST.LINEAR(MAX(${x})+${n}*(MAX(${x})-MIN(${x}))/(ROWS(${x})-1),${y},${x})`; } },
   { g: 'Tarih', id: 'today', icon: 'calendar', t: 'Bugünün tarihi', d: 'Her açılışta güncellenir', nf: 'dd.mm.yyyy', f: [], b: () => 'TODAY()' },
   { g: 'Tarih', id: 'diff', hd: 'Fark', icon: 'calendar', t: 'İki tarih arası', d: 'Gün, ay, yıl veya iş günü farkı', row: 1, f: [F('s', 'Başlangıç tarihi', 'cell', { sel: 1 }), F('e', 'Bitiş tarihi (boşsa bugün)', 'cell'), F('u', 'Birim', 'select', { opts: [['D', 'Gün'], ['M', 'Ay'], ['Y', 'Yıl'], ['W', 'İş günü (hafta içi)']] })], b: v => { const s = firstCell(v.s), e = v.e ? firstCell(v.e) : 'TODAY()'; const u = v.u || 'D'; return u === 'W' ? `NETWORKDAYS(${s},${e})` : u === 'D' ? `IFERROR(DATEDIF(${s},${e},"D"),0)` : `IFERROR(DATEDIF(${s},${e},"${u}"),0)`; }, nf: '0' },
   { g: 'Tarih', id: 'age', hd: 'Yaş', icon: 'calendar', t: 'Yaş hesapla', d: 'Doğum tarihinden bugünkü yaş', row: 1, nf: '0', f: [F('b', 'Doğum tarihi', 'cell', { sel: 1 })], b: v => `DATEDIF(${firstCell(v.b)},TODAY(),"Y")` },
@@ -394,6 +396,7 @@ class Wizards {
       let f; try { f = X.toStore(rc.b(vals)); X.parse(f); } catch (e) { return { err: 'Girdileri kontrol edin.' }; }
       return { f, n };
     }
+    const rcNf = () => rc.nf || (rc.nfFrom && inputs[rc.nfFrom] ? t.colNf(inputs[rc.nfFrom].value) : null);
     function upd() {
       if (auto) self.target = autoTarget();
       const p = plan(); const tg = self.target;
@@ -414,7 +417,7 @@ class Wizards {
         return;
       }
       const v = self.app.evalFormula(p.f, tg);
-      preview.append(h('div', { class: 'pv-res' }, h('span', { text: 'Sonuç' + (p.n > 1 ? ' (ilk satır)' : '') }), h('b', { text: X.formatValue(v, rc.nf || null) || '—' })));
+      preview.append(h('div', { class: 'pv-res' }, h('span', { text: 'Sonuç' + (p.n > 1 ? ' (ilk satır)' : '') }), h('b', { text: X.formatValue(v, rcNf() || null) || '—' })));
       if (p.n > 1) {
         const ul = h('div', { class: 'pv-rows' });
         for (let i = 0; i < Math.min(p.n, 5); i++) { const fi = i ? X.shiftFormula(p.f, i, 0) : p.f; const vi = self.app.evalFormula(fi, { si: tg.si, r: tg.r + i, c: tg.c }); ul.append(h('div', null, h('small', { text: (tg.r + i + 1) + '. satır' }), h('span', { text: X.formatValue(vi, rc.nf || null) || '(boş)' }))); }
@@ -441,7 +444,7 @@ class Wizards {
         d.close(); U.toast('✓ ' + rc.t + ' oluşturuldu'); return false;
       }
       if (rc.row && t.header && tg.r >= t.r0 && tg.c > t.g.c2 && hdrInp.value.trim() && wb.value(tg.si, t.g.r1, tg.c) == null) hdr = { r: t.g.r1, c: tg.c, text: hdrInp.value.trim(), s: (wb.cell(tg.si, t.g.r1, t.g.c2) || {}).s };
-      app.applyFormula(tg.si, tg.r, tg.c, p.f, p.n, rc.nf, hdr); d.close(); U.toast('✓ ' + rc.t + ' uygulandı' + (p.n > 1 ? ` (${p.n} satır)` : '')); return false;
+      app.applyFormula(tg.si, tg.r, tg.c, p.f, p.n, rcNf(), hdr); d.close(); U.toast('✓ ' + rc.t + ' uygulandı' + (p.n > 1 ? ` (${p.n} satır)` : '')); return false;
     } }] });
     colFields.forEach(cf => cf.showInfo());
     upd();

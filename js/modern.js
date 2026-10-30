@@ -634,48 +634,98 @@ class Modern {
   }
 
   // ---------- Grafik ----------
+  chartTheme() { return document.documentElement.classList.contains('dark') ? { bg: '#19191c', fg: '#e4e4e7', muted: '#a1a1aa', grid: '#3f3f46' } : null; }
   viewChart(T) {
-    const wb = this.wb, si = T.si, vs = this.vsCur; const rows = this.rowsOf(T);
-    const textCols = T.cols.filter(c => c.kind === 'text' || c.kind === 'date'), numCols = T.cols.filter(c => c.kind !== 'text' && c.kind !== 'date');
-    if (!numCols.length) return h('div', { class: 'm-card m-none', text: 'Grafik için en az bir sayı sütunu gerekir.' });
-    const cs = vs.chart || (vs.chart = { type: 'column', lab: (T.cols.find(c => c.kind === 'text') || textCols[0] || T.cols[0]).c, vals: [numCols[numCols.length - 1].c], group: true });
-    const sel = (opts, v, fn) => { const s = h('select', { class: 'inp' }, ...opts.map(([k, t]) => h('option', { value: k, text: t }))); s.value = v; s.onchange = () => fn(s.value); return s; };
-    const types = h('div', { class: 'm-ctypes' }, ...C.TYPES.filter(t => t[0] !== 'scatter').map(([k, t]) => h('button', { class: 'chip' + (cs.type === k ? ' on' : ''), type: 'button', text: t, onclick: () => { cs.type = k; this.render(); } })));
-    const valChips = h('div', { class: 'vchips' }, ...numCols.map(c => h('button', { class: 'chip sm' + (cs.vals.includes(c.c) ? ' on' : ''), type: 'button', text: c.name, onclick: () => { const i = cs.vals.indexOf(c.c); if (i >= 0) { if (cs.vals.length > 1) cs.vals.splice(i, 1); } else cs.vals.push(c.c); this.render(); } })));
-    const grp = h('input', { type: 'checkbox', checked: cs.group, onchange: () => { cs.group = grp.checked; this.render(); } });
-    const ctrl = h('div', { class: 'm-card m-chartctl' }, types,
-      h('div', { class: 'm-sumctl' }, h('label', null, h('small', { text: 'Etiketler' }), sel(T.cols.map(c => [c.c, c.name]), cs.lab, v => { cs.lab = +v; this.render(); })), h('label', { class: 'chk' }, grp, h('span', { text: ' Aynı etiketleri birleştir (topla)' }))),
-      h('small', { class: 'lbl', text: 'Değerler' }), valChips);
-    // veri
-    const lcol = T.cols.find(c => c.c === cs.lab) || T.cols[0]; const vcols = cs.vals.map(c => T.cols.find(x => x.c === c)).filter(Boolean);
-    let labels = [], series = vcols.map(c => ({ name: c.name, values: [], fmt: c.nf }));
-    if (cs.group) { const m = new Map(); rows.forEach(r => { const k = wb.display(si, r, lcol.c) || '(boş)'; if (!m.has(k)) { m.set(k, labels.length); labels.push(k); series.forEach(s => s.values.push(0)); } const i = m.get(k); vcols.forEach((c, j) => { const v = wb.value(si, r, c.c); if (typeof v === 'number') series[j].values[i] += v; }); }); }
-    else rows.forEach(r => { labels.push(wb.display(si, r, lcol.c)); vcols.forEach((c, j) => { const v = wb.value(si, r, c.c); series[j].values.push(typeof v === 'number' ? v : null); }); });
-    const cv = h('canvas', { class: 'm-chartcv' });
-    const title = vcols.map(c => c.name).join(', ') + ' — ' + lcol.name;
-    const dark = document.documentElement.classList.contains('dark'); const theme = dark ? { bg: '#19191c', fg: '#e4e4e7', muted: '#a1a1aa', grid: '#3f3f46' } : null;
-    requestAnimationFrame(() => C.draw(cv, { type: cs.type, title, labels: true }, { labels, series }, theme));
-    const addBtn = h('button', { class: 'btn', html: icon('plus') + '<span>Excel dosyasına ekle</span>', onclick: () => this.chartToSheet(T, cs, lcol, vcols, title) });
-    const out = h('div', { class: 'm-sum' }, ctrl, h('div', { class: 'm-card' }, h('div', { class: 'm-cardhead' }, h('b', { text: title }), h('div', { class: 'spacer' }), addBtn), cv));
-    // dosyadaki grafikler
-    const sh = wb.sheets[si];
-    if (sh.charts.length) {
-      const gal = h('div', { class: 'm-gallery' });
-      sh.charts.forEach(spec => { const c2 = h('canvas', { class: 'm-chartcv sm' }); requestAnimationFrame(() => C.draw(c2, spec, C.extract(wb, si, spec), theme)); gal.append(h('div', { class: 'm-card' }, h('div', { class: 'm-cardhead' }, h('b', { text: spec.title || 'Grafik' }), h('div', { class: 'spacer' }), h('button', { class: 'ic ghost', html: icon('trash'), title: 'Grafiği dosyadan kaldır', onclick: async () => { if (await U.confirm('Bu grafik dosyadan kaldırılsın mı?', 'Grafiği kaldır', 'Kaldır')) { wb.begin(); wb.snapSheet(si); sh.charts.splice(sh.charts.indexOf(spec), 1); wb.end(); } } })), c2)); });
-      out.append(h('div', { class: 'm-sec2', text: 'Dosyadaki grafikler' }), gal);
+    const wb = this.wb, si = T.si, sh = wb.sheets[si]; const theme = this.chartTheme();
+    const wrap = h('div', { class: 'm-sum' });
+    wrap.append(h('div', { class: 'm-card m-chartbar' }, h('div', null, h('b', { text: 'Grafiklerim' }), h('small', { text: sh.charts.length ? sh.charts.length + ' grafik · Excel dosyasına da kaydedilir' : 'Neyi görmek istediğinizi seçerek grafik oluşturun' })),
+      h('div', { class: 'spacer' }), h('button', { class: 'btn primary', html: icon('plus') + '<span>Yeni grafik</span>', onclick: () => this.chartWizard(T) })));
+    if (!sh.charts.length) {
+      wrap.append(h('button', { class: 'm-rcard add m-chartadd', onclick: () => this.chartWizard(T) }, h('span', { html: icon('chart') }), h('span', { text: 'İlk grafiğinizi oluşturun: ne gösterilsin, neye göre, hangi kayıtlar, tahmin…' })));
+      return wrap;
     }
-    return out;
+    const gal = h('div', { class: 'm-gallery' });
+    sh.charts.forEach(spec => {
+      const cv = h('canvas', { class: 'm-chartcv sm' });
+      requestAnimationFrame(() => { try { C.draw(cv, spec, C.extract(wb, si, spec), theme); } catch (e) { console.warn(e); } });
+      const del = async () => { if (await U.confirm('“' + (spec.title || 'Grafik') + '” silinsin mi?', 'Grafiği sil', 'Sil')) { wb.begin(); wb.snapSheet(si); sh.charts.splice(sh.charts.indexOf(spec), 1); wb.end(); } };
+      gal.append(h('div', { class: 'm-card' }, h('div', { class: 'm-cardhead' }, h('b', { text: spec.title || 'Grafik' }), h('div', { class: 'spacer' }),
+        spec.q ? h('button', { class: 'ic ghost', html: icon('rules'), title: 'Düzenle', 'aria-label': 'Düzenle', onclick: () => this.chartWizard(T, spec) }) : null,
+        h('button', { class: 'ic ghost', html: icon('trash'), title: 'Sil', 'aria-label': 'Sil', onclick: del })), cv));
+    });
+    wrap.append(gal);
+    return wrap;
   }
-  chartToSheet(T, cs, lcol, vcols, title) {
-    const wb = this.wb, si = T.si, sh = wb.sheets[si];
-    if (cs.group || vcols.length > 1 && vcols.some((c, i) => i && c.c !== vcols[i - 1].c + 1)) {
-      U.alert('Birleştirilmiş (toplanmış) grafiği dosyaya eklemek için önce “Özet” görünümünden özet tabloyu dosyaya ekleyin; ya da “Aynı etiketleri birleştir” kutusunu kapatıp tek tek satırların grafiğini ekleyin.', 'Grafik'); return;
-    }
-    const c1 = Math.min(...vcols.map(c => c.c)), c2 = Math.max(...vcols.map(c => c.c));
-    let x = 0; const d = wb.dims(si); for (let c = 0; c <= d.cols; c++) x += sh.colW[c] || 90;
-    wb.begin(); wb.snapSheet(si);
-    sh.charts.push({ id: 'c' + Date.now().toString(36), type: cs.type, range: { r1: T.hr >= 0 ? T.hr : T.r0, c1, r2: T.r2, c2 }, lr: { r1: T.hr >= 0 ? T.hr : T.r0, c1: lcol.c, r2: T.r2, c2: lcol.c }, title, labels: true, x: x + 16, y: 0, w: 480, h: 300 });
-    wb.end(); U.toast('✓ Grafik dosyaya eklendi (Excel\'de resim olarak görünür)');
+  // Yeni grafik: Bul ve getir gibi adım adım seç, canlı önizle, tahmin ekle
+  chartWizard(T, edit) {
+    const wb = this.wb, si = T.si, sh = wb.sheets[si]; const theme = this.chartTheme();
+    const textCols = T.cols.filter(c => c.kind === 'text' || c.kind === 'date'), numCols = T.cols.filter(c => c.kind !== 'text' && c.kind !== 'date');
+    const q = edit ? JSON.parse(JSON.stringify(edit.q)) : { lab: (T.cols.find(c => c.kind === 'text') || textCols[0] || T.cols[0]).c, labMode: 'value', vals: numCols.length ? [{ c: numCols[numCols.length - 1].c, op: 'sum' }] : [{ c: -1, op: 'count' }], conds: [], sort: 'none', top: 0, fc: 0, trend: false };
+    let type = edit ? edit.type : 'column', title = edit ? edit.title : '', autoTitle = !edit;
+    const body = h('div', { class: 'form m-look m-cw' });
+    const cv = h('canvas', { class: 'm-chartcv' });
+    const fcBox = h('div', { class: 'm-fcbox' });
+    const chip = (t, on, fn, cls) => h('button', { class: 'chip sm' + (on ? ' on' : '') + (cls ? ' ' + cls : ''), type: 'button', text: t, onclick: fn });
+    const step = (n, t) => h('div', { class: 'm-step' }, h('b', { text: n }), h('span', { text: t }));
+    const colName = c => (T.cols.find(x => x.c === c) || {}).name || '?';
+    const makeTitle = () => q.vals.map(v => v.c < 0 ? 'Kayıt sayısı' : C.AGG[v.op] + ' ' + colName(v.c)).join(', ') + ' — ' + colName(q.lab) + (q.conds.length ? ' (' + q.conds.map(f => colName(f.c) + ' ' + OPS.find(o => o[0] === f.op)[1] + (f.op === 'empty' || f.op === 'filled' ? '' : ' ' + f.val)).join(', ') + ')' : '');
+    const preview = () => {
+      if (autoTitle) { title = makeTitle(); const ti = body.querySelector('.m-cw-title'); if (ti) ti.value = title; }
+      let data; try { data = C.query(wb, si, q); } catch (e) { data = { labels: [], series: [] }; }
+      requestAnimationFrame(() => C.draw(cv, { type, title, labels: true }, data, theme));
+      fcBox.innerHTML = '';
+      if (data.forecast) {
+        const f = data.forecast; const fm = v => X.formatValue(v, f.fmt || '#,##0.##');
+        fcBox.append(h('div', { class: 'm-fc' }, h('b', { text: 'Tahmin (TAHMİN.DOĞRUSAL)' }), h('small', { text: 'Her dönem ortalama ' + (f.slope >= 0 ? '+' : '') + fm(f.slope) + ' değişiyor.' }),
+          h('div', { class: 'm-fc-list' }, ...f.items.map(it => h('span', null, h('small', { text: it.t }), h('b', { text: fm(it.v) }))))));
+      } else if (q.fc > 0) fcBox.append(h('p', { class: 'hint', text: 'Tahmin için en az 2 dönem gerekir.' }));
+    };
+    const draw = () => {
+      body.innerHTML = '';
+      const labCol = T.cols.find(c => c.c === q.lab);
+      // 1. tür
+      body.append(step('1', 'Grafik türü'), h('div', { class: 'vchips' }, ...C.TYPES.filter(t => t[0] !== 'scatter').map(([k, t]) => chip(t, type === k, () => { type = k; draw(); }))));
+      // 2. neye göre
+      body.append(step('2', 'Neye göre? (grafiğin altındaki etiketler)'), h('div', { class: 'vchips' }, ...T.cols.map(c => chip(c.name, c.c === q.lab, () => { q.lab = c.c; q.labMode = c.kind === 'date' ? 'month' : 'value'; draw(); }))));
+      if (labCol && labCol.kind === 'date') body.append(h('div', { class: 'segs m-modes' }, ...[['value', 'Gün gün'], ['month', 'Aylara göre'], ['year', 'Yıllara göre']].map(([k, t]) => h('button', { class: 'seg' + (q.labMode === k ? ' on' : ''), type: 'button', text: t, onclick: () => { q.labMode = k; draw(); } }))));
+      // 3. ne gösterilsin
+      body.append(step('3', 'Ne gösterilsin? (birden çok seçebilirsiniz)'));
+      const isOn = c => q.vals.find(v => v.c === c);
+      body.append(h('div', { class: 'vchips' }, chip('Kayıt sayısı', !!isOn(-1), () => { const v = isOn(-1); if (v) { if (q.vals.length > 1) q.vals.splice(q.vals.indexOf(v), 1); } else q.vals.push({ c: -1, op: 'count' }); draw(); }),
+        ...T.cols.filter(c => c.c !== q.lab && c.kind !== 'text' && c.kind !== 'date').map(c => chip(c.name, !!isOn(c.c), () => { const v = isOn(c.c); if (v) { if (q.vals.length > 1) q.vals.splice(q.vals.indexOf(v), 1); } else q.vals.push({ c: c.c, op: 'sum' }); draw(); }))));
+      q.vals.filter(v => v.c >= 0).forEach(v => body.append(h('div', { class: 'm-vrow m-oprow' }, h('span', { class: 'm-pill', text: colName(v.c) }), h('div', { class: 'segs' }, ...[['sum', 'Topla'], ['avg', 'Ortalama'], ['max', 'En büyük'], ['min', 'En küçük'], ['count', 'Say']].map(([k, t]) => h('button', { class: 'seg' + (v.op === k ? ' on' : ''), type: 'button', text: t, onclick: () => { v.op = k; draw(); } }))))));
+      // 4. koşullar
+      body.append(step('4', 'Hangi kayıtlar? (EĞER gibi koşul — boş bırakılırsa hepsi)'));
+      q.conds.forEach((f, i) => body.append(h('div', { class: 'm-rule' }, h('span', { class: 'm-rsw m-cond-ic', text: 'EĞER' }), h('span', { text: colName(f.c) + ' ' + OPS.find(o => o[0] === f.op)[1] + (f.op === 'empty' || f.op === 'filled' ? '' : ' ' + f.val) }), h('button', { class: 'ic ghost', type: 'button', html: icon('trash'), title: 'Koşulu kaldır', onclick: () => { q.conds.splice(i, 1); draw(); } }))));
+      const cs = h('select', { class: 'inp' }, ...T.cols.map(c => h('option', { value: c.c, text: c.name })));
+      const op = h('select', { class: 'inp' }, ...OPS.map(([v, t]) => h('option', { value: v, text: t })));
+      const val = h('input', { class: 'inp', placeholder: 'Değer' });
+      const vch = h('div', { class: 'vchips' });
+      const fillV = () => { vch.innerHTML = ''; const c = T.cols.find(x => x.c === +cs.value); if (c && c.kind === 'text') this.distinct(T, c).slice(0, 14).forEach(v => vch.append(chip(v, val.value === v, () => { val.value = v; U.$$('.chip', vch).forEach(x => x.classList.toggle('on', x.textContent === v)); }))); val.style.display = op.value === 'empty' || op.value === 'filled' ? 'none' : ''; op.value = op.value || '='; };
+      cs.onchange = fillV; op.onchange = fillV; fillV();
+      body.append(h('div', { class: 'm-cond' }, cs, op, val, h('button', { class: 'btn', type: 'button', html: icon('plus') + '<span>Ekle</span>', onclick: () => { if (!/^(empty|filled)$/.test(op.value) && !val.value.trim()) { U.toast('Bir değer yazın ya da seçin'); return; } q.conds.push({ c: +cs.value, op: op.value, val: val.value.trim() }); draw(); } })), vch);
+      // 5. sıralama
+      body.append(step('5', 'Sıralama'), h('div', { class: 'segs m-modes' }, ...[['none', 'Olduğu gibi'], ['desc', 'Büyükten küçüğe'], ['asc', 'Küçükten büyüğe'], ['label', 'Ada / tarihe göre']].map(([k, t]) => h('button', { class: 'seg' + (q.sort === k ? ' on' : ''), type: 'button', text: t, onclick: () => { q.sort = k; draw(); } }))),
+        h('div', { class: 'vchips' }, ...[[0, 'Hepsi'], [3, 'İlk 3'], [5, 'İlk 5'], [10, 'İlk 10']].map(([n, t]) => chip(t, (q.top || 0) === n, () => { q.top = n; draw(); }))));
+      // 6. tahmin
+      const pie = type === 'pie' || type === 'doughnut';
+      body.append(step('6', 'Tahmin (Excel TAHMİN.DOĞRUSAL)'));
+      if (pie) body.append(h('p', { class: 'hint', text: 'Pasta ve halka grafikte tahmin yapılmaz; çizgi ya da sütun seçin.' }));
+      else body.append(h('div', { class: 'vchips' }, ...[[0, 'Tahmin yok'], [1, 'Sonraki 1 dönem'], [3, 'Sonraki 3 dönem'], [6, 'Sonraki 6 dönem']].map(([n, t]) => chip(t, (q.fc || 0) === n, () => { q.fc = n; if (n && q.sort !== 'label' && q.sort !== 'none') q.sort = 'label'; draw(); }))),
+        h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: !!q.trend, onchange: e => { q.trend = e.target.checked; preview(); } }), h('span', { text: 'Eğilim çizgisini göster (genel gidişat)' })));
+      if (pie) { q.fc = 0; q.trend = false; }
+      // başlık + önizleme
+      const ti = h('input', { class: 'inp m-cw-title', value: title, oninput: () => { title = ti.value; autoTitle = false; preview(); } });
+      body.append(h('label', { class: 'lbl', text: 'Grafiğin adı' }), ti, step('✓', 'Önizleme'), h('div', { class: 'm-card m-cw-prev' }, cv), fcBox);
+      preview();
+    };
+    draw();
+    U.dialog({ title: icon('chart') + (edit ? ' Grafiği düzenle' : ' Yeni grafik'), body, wide: true, cls: 'm-cw-dlg', buttons: [{ text: 'Vazgeç', value: null }, { text: edit ? 'Kaydet' : 'Grafiği ekle', kind: 'primary', value: 1, onClick: () => {
+      wb.begin(); wb.snapSheet(si);
+      if (edit) { const s2 = sh.charts.find(x => x.id === edit.id); Object.assign(s2, { type, title, q }); }
+      else { let x = 0; const d = wb.dims(si); for (let c = 0; c <= d.cols; c++) x += sh.colW[c] || 90; sh.charts.push({ id: 'c' + Date.now().toString(36), type, title, labels: true, q, range: { r1: 0, c1: q.lab, r2: Math.max(T.r2, 0), c2: q.lab }, x: x + 16, y: sh.charts.length * 320, w: 520, h: 300 }); }
+      wb.end(); this.view = 'chart'; this.render(); U.toast(edit ? '✓ Grafik güncellendi' : '✓ Grafik eklendi');
+    } }] });
   }
 
   // ---------- tablolar ----------
@@ -816,7 +866,7 @@ class Modern {
   sample() {
     // klasik görünümdeki örnekle aynı veriler
     const wb = new M.Workbook(); wb.name = 'Örnek Satış Tablosu'; const s = wb.sheets[0]; s.name = 'Satışlar';
-    const rows = [['Tarih', 'Ürün', 'Şehir', 'Adet', 'Birim Fiyat', 'Tutar'], ['01.10.2026', 'Defter', 'Ankara', 12, 45], ['02.10.2026', 'Kalem', 'İzmir', 40, 12.5], ['03.10.2026', 'Çanta', 'Ankara', 3, 650], ['05.10.2026', 'Defter', 'İstanbul', 25, 45], ['07.10.2026', 'Silgi', 'İzmir', 60, 6], ['09.10.2026', 'Çanta', 'İstanbul', 5, 650], ['12.10.2026', 'Kalem', 'Ankara', 30, 12.5], ['15.10.2026', 'Defter', 'İzmir', 18, 45]];
+    const rows = [['Tarih', 'Ürün', 'Şehir', 'Adet', 'Birim Fiyat', 'Tutar'], ['04.06.2026', 'Defter', 'Ankara', 12, 45], ['18.06.2026', 'Kalem', 'İzmir', 40, 12.5], ['06.07.2026', 'Çanta', 'Ankara', 3, 650], ['21.07.2026', 'Defter', 'İstanbul', 25, 45], ['05.08.2026', 'Silgi', 'İzmir', 60, 6], ['19.08.2026', 'Çanta', 'İstanbul', 5, 650], ['08.09.2026', 'Kalem', 'Ankara', 30, 12.5], ['24.09.2026', 'Defter', 'İzmir', 18, 45], ['07.10.2026', 'Çanta', 'İzmir', 4, 650], ['20.10.2026', 'Defter', 'Ankara', 30, 45]];
     rows.forEach((row, r) => row.forEach((v, c) => { const pi = typeof v === 'string' ? IO.parseInput(v) : { v }; s.cells.set(M.key(r, c), { v: pi.v, f: null, s: pi.nf ? { nf: pi.nf } : null }); }));
     for (let r = 1; r < rows.length; r++) { s.cells.set(M.key(r, 5), { v: null, f: `D${r + 1}*E${r + 1}`, s: { nf: '#,##0.00 ₺' } }); s.cells.get(M.key(r, 4)).s = { nf: '#,##0.00 ₺' }; }
     const H = '#16a34a';
