@@ -51,6 +51,7 @@ html.dark .m-view.on { color: #04210f; }
 .m-search { border: 0; outline: none; background: transparent; flex: 1; min-width: 0; height: 100%; }
 .m-tools .btn { height: 40px; border-radius: 12px; background: var(--surface); }
 .m-tools .btn .i { width: 18px; height: 18px; }
+.m-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .m-tools .m-calc { background: var(--accent-soft); border-color: transparent; color: var(--accent-2); }
 html.dark .m-tools .m-calc { color: #bbf7d0; }
 .m-chips { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
@@ -183,8 +184,9 @@ html.dark .m-rcard dd.m-fx { color: #f9a8d4; }
   .m-save span { display: none; }
   .m-save { width: 42px; padding: 0; }
   .m-tools { padding: 6px 12px 10px; }
-  .m-tools .btn span { display: none; }
-  .m-tools .btn { width: 42px; padding: 0; }
+  .m-actions { width: 100%; display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px; }
+  .m-actions::-webkit-scrollbar { display: none; }
+  .m-actions .btn { flex: none; padding: 0 12px; }
   .m-views { width: 100%; }
   .m-view { flex: 1; justify-content: center; padding: 8px 4px; }
   .m-searchbox { max-width: none; }

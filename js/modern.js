@@ -47,7 +47,7 @@ class Modern {
       else { this.docId = this.newId(); this.sample(); }
     } catch (e) { this.docId = this.newId(); }
     const openUrl = new URLSearchParams(location.search).get('open'); if (openUrl) this.openFromUrl(openUrl);
-    if ('serviceWorker' in navigator && /^https?:/.test(location.protocol) && location.hostname !== 'localhost') navigator.serviceWorker.register('sw.js').catch(() => { });
+    if ('serviceWorker' in navigator && /^https?:/.test(location.protocol) && location.hostname !== 'localhost') { const had = !!navigator.serviceWorker.controller; navigator.serviceWorker.register('sw.js').catch(() => { }); navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !this._reloaded) { this._reloaded = true; this.saveLocal().then(() => location.reload()); } }); }
     addEventListener('beforeunload', () => this.saveLocal());
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.saveLocal(); });
   }
@@ -207,11 +207,12 @@ class Modern {
     vs.filters.forEach((f, i) => { const col = T.cols.find(c => c.c === f.c); chips.append(h('span', { class: 'm-chip' }, h('span', { text: (col ? col.name : '?') + ' ' + OPS.find(o => o[0] === f.op)[1] + (f.op === 'empty' || f.op === 'filled' ? '' : ' ' + f.val) }), h('button', { html: icon('x'), 'aria-label': 'Kaldır', onclick: () => { vs.filters.splice(i, 1); this.render(); } }))); });
     if (vs.sort) { const col = T.cols.find(c => c.c === vs.sort.c); chips.append(h('span', { class: 'm-chip sort' }, h('span', { text: (col ? col.name : '?') + (vs.sort.dir > 0 ? ' ↑' : ' ↓') }), h('button', { html: icon('x'), onclick: () => { vs.sort = null; this.render(); } }))); }
     t.append(h('div', { class: 'm-searchbox' }, h('span', { html: icon('search') }), q),
-      h('button', { class: 'btn', html: icon('filter') + '<span>Filtre</span>', onclick: e => this.filterDialog(T) }),
-      h('button', { class: 'btn', html: icon('fill') + '<span>Renk</span>', onclick: () => this.colorDialog(T) }),
-      h('button', { class: 'btn', html: icon('search') + '<span>Bul ve getir</span>', onclick: () => this.lookupTool() }),
-      h('button', { class: 'btn', html: icon('plus') + '<span>Sütun</span>', onclick: () => this.addColumn(T) }),
-      h('button', { class: 'btn m-calc', html: icon('wand') + '<span>Hesapla</span>', onclick: () => { this.focusCol(T, T.cols[0] && T.cols[0].c); this.wiz.openRecipes(); } }),
+      h('div', { class: 'm-actions' },
+        h('button', { class: 'btn m-calc', html: icon('wand') + '<span>Hesapla</span>', onclick: () => { this.focusCol(T, T.cols[0] && T.cols[0].c); this.wiz.openRecipes(); } }),
+        h('button', { class: 'btn', html: icon('pointer') + '<span>Bul ve getir</span>', onclick: () => this.lookupTool() }),
+        h('button', { class: 'btn', html: icon('plus') + '<span>Sütun</span>', onclick: () => this.addColumn(T) }),
+        h('button', { class: 'btn', html: icon('filter') + '<span>Filtre</span>', onclick: e => this.filterDialog(T) }),
+        h('button', { class: 'btn', html: icon('fill') + '<span>Renk</span>', onclick: () => this.colorDialog(T) })),
       chips);
   }
   emptyState() {
