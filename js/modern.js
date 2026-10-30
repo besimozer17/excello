@@ -382,6 +382,7 @@ class Modern {
       { text: 'Küçükten büyüğe sırala', icon: 'sortA', onClick: () => { vs.sort = { c: c0.col.c, dir: 1 }; this.msel = null; this.render(); } },
       { text: 'Büyükten küçüğe sırala', icon: 'sortD', onClick: () => { vs.sort = { c: c0.col.c, dir: -1 }; this.msel = null; this.render(); } },
       { sep: 1 },
+      { text: 'Seçimle formül kur ▸', icon: 'calc', onClick: () => sub(this.selFormulaItems()) },
       { text: 'Seçimden grafik yap', icon: 'chart', onClick: () => { const lab = colsSel.find(c => c.kind === 'text' || c.kind === 'date') || T.cols.find(c => c.kind === 'text') || T.cols[0]; const vals = colsSel.filter(c => c.kind !== 'text' && c.kind !== 'date').map(c => ({ c: c.c, op: 'sum' })); this.chartWizard(T, null, { lab: lab.c, labMode: lab.kind === 'date' ? 'month' : 'value', vals: vals.length ? vals : [{ c: -1, op: 'count' }], conds: rowsSel.length < this._vr.length && rowsSel.length > 1 ? [] : [] }); } },
       { text: 'Bu sütunla hesapla…', icon: 'wand', onClick: () => { this.focusCol(T, c0.col.c); this.wiz.openRecipes(); } },
       { text: 'Renk kuralı…', icon: 'rules', onClick: () => this.colorDialog(T, c0.col) },
@@ -390,6 +391,55 @@ class Modern {
       { text: rowsSel.length > 1 ? rowsSel.length + ' kaydı sil' : 'Kaydı sil', icon: 'trash', danger: 1, onClick: async () => { if (!await U.confirm(rowsSel.length + ' kayıt (satır) silinsin mi? Geri al ile geri getirebilirsiniz.', 'Kayıt sil', 'Sil')) return; wb.begin(); rowsSel.slice().sort((a, b) => b - a).forEach(r => wb.shift(si, 'r', r, -1)); wb.end(); this.msel = null; this.render(); } },
       { text: 'Yeni kayıt ekle', icon: 'plus', onClick: () => this.rowForm(T, null) }
     ]);
+  }
+  // ---------- seçimle formül: sonuçlar "Hesaplar" tablosuna, formülüyle ----------
+  selRefs() {
+    const g = this.selRect(); if (!g) return null; const T = this._vT; const sh = X.quoteSheet(this.wb.sheets[T.si].name) + '!';
+    const rows = this._vr.slice(g.r1, g.r2 + 1).slice().sort((a, b) => a - b); const cols = this._vc.slice(g.c1, g.c2 + 1);
+    const contig = rows.every((r, i) => !i || r === rows[i - 1] + 1) && cols.every((c, i) => !i || c.c === cols[i - 1].c + 1);
+    const abs = (r, c) => '$' + X.colName(c) + '$' + (r + 1);
+    const block = contig ? sh + abs(rows[0], cols[0].c) + (rows.length > 1 || cols.length > 1 ? ':' + abs(rows[rows.length - 1], cols[cols.length - 1].c) : '') : null;
+    const list = []; rows.forEach(r => cols.forEach(c => list.push(sh + abs(r, c.c))));
+    return { rows, cols, contig, block, any: block || list.join(','), sheetRows: { r1: rows[0], r2: rows[rows.length - 1] } };
+  }
+  calcSheet() {
+    const wb = this.wb; let i = wb.sheetIndex('Hesaplar');
+    if (i < 0) { const cur = wb.active; wb.begin(); const s = wb.addSheet('Hesaplar'); i = wb.sheets.indexOf(s); const hs = { b: 1, bg: '#16a34a', fc: '#ffffff', ha: 'center' }; wb.patchCell(i, 0, 0, { v: 'Hesap', f: null }); wb.setStyle(i, 0, 0, hs); wb.patchCell(i, 0, 1, { v: 'Sonuç', f: null }); wb.setStyle(i, 0, 1, hs); s.colW = { 0: 220, 1: 160 }; wb.active = cur; wb.end(); }
+    const d = wb.dims(i); let r = 1; while (r < d.rows && (wb.value(i, r, 0) != null || wb.value(i, r, 1) != null)) r++;
+    return { si: i, r };
+  }
+  addCalc(name, f, nf) {
+    const wb = this.wb; const t = this.calcSheet();
+    wb.begin(); wb.patchCell(t.si, t.r, 0, { v: name, f: null }); wb.patchCell(t.si, t.r, 1, { f: X.toStore(f), v: null }); if (nf) wb.setStyle(t.si, t.r, 1, { nf }); wb.end();
+    const v = wb.display(t.si, t.r, 1);
+    U.toast('✓ ' + name + ' = ' + v + ' (Hesaplar tablosuna eklendi)');
+    return t;
+  }
+  selFormulaItems() {
+    const S = this.selRefs(); if (!S) return []; const wb = this.wb, T = this._vT;
+    const numCols = S.cols.filter(c => c.kind !== 'text' && c.kind !== 'date'); const nf = (numCols[0] || {}).nf || null;
+    const what = (S.cols.length === 1 ? S.cols[0].name : S.cols.map(c => c.name).join(' + ')) + (S.rows.length < this._vr.length ? ' (' + S.rows.length + ' kayıt)' : '');
+    const agg = (fn, tr, nm, keepNf) => ({ text: nm + ' (' + tr + ')', onClick: () => this.addCalc(nm + ' ' + what, fn + '(' + S.any + ')', keepNf ? nf : null) });
+    const items = [{ head: 'Seçim: ' + what }];
+    if (numCols.length) items.push(agg('SUM', 'TOPLA', 'Toplam', 1), agg('AVERAGE', 'ORTALAMA', 'Ortalama', 1), agg('MAX', 'MAK', 'En büyük', 1), agg('MIN', 'MİN', 'En küçük', 1));
+    items.push(agg('COUNTA', 'BAĞ_DEĞ_DOLU_SAY', 'Dolu hücre sayısı', 0));
+    if (S.cols.length === 1 && S.cols[0].kind === 'text' && S.contig) items.push({ text: 'Farklı değer sayısı', onClick: () => this.addCalc('Farklı ' + what, 'COUNTA(UNIQUE(' + S.block + '))') });
+    items.push({ sep: 1 });
+    items.push({ text: 'DÜŞEYARA ile bul (Bul ve getir)…', icon: 'pointer', onClick: () => { const key = S.cols[0]; const vals = []; S.rows.forEach(r => { const d = wb.display(T.si, r, key.c); if (d && !vals.includes(d)) vals.push(d); }); this.lookupTool({ si: T.si, key: key.c, rets: S.cols.slice(1).map(c => c.c), picks: vals }); } });
+    if (numCols.length === 1 && S.contig && S.rows.length > 1) items.push({ text: 'Sonraki değeri tahmin et (TAHMİN)', icon: 'line', onClick: () => { const y = S.block; this.addCalc('Tahmin: sonraki ' + numCols[0].name, 'FORECAST.LINEAR(ROWS(' + y + ')+1,' + y + ',SEQUENCE(ROWS(' + y + ')))', nf); } });
+    items.push(S.contig ? { text: 'Başka işlev (234 işlev)…', icon: 'calc', onClick: () => this.selFunction(S) } : { text: 'Başka işlev: sıralama/filtre varken seçim parçalı', icon: 'calc', disabled: true });
+    return items;
+  }
+  selFunction(S) {
+    // seçilen alan işlevin ilk alan kutusuna yazılır, sonuç Hesaplar tablosuna
+    const wb = this.wb, T = this._vT; const t = this.calcSheet();
+    const g = { r1: S.rows[0], r2: S.rows[S.rows.length - 1], c1: S.cols[0].c, c2: S.cols[S.cols.length - 1].c };
+    this.sel = { r: g.r1, c: g.c1, r1: g.r1, c1: g.c1, r2: g.r2, c2: g.c2 };
+    this.fnTarget = () => ({ si: t.si, r: t.r, c: 1 });
+    this._calcName = (S.cols.length === 1 ? S.cols[0].name : 'Hesap');
+    this.wiz.openFunctions();
+    // pencere kapanınca hedefi bırak
+    const off = () => { if (!U.topDialog()) { this.fnTarget = null; this._calcName = null; } else setTimeout(off, 400); }; setTimeout(off, 400);
   }
   editCell(td, T, r, col, startText) {
     const wb = this.wb, si = T.si; const cell = wb.cell(si, r, col.c);
@@ -603,13 +653,14 @@ class Modern {
     U.dialog({ title: icon('fill') + ' Renkler', body, wide: true, buttons: [{ text: 'Tamam', kind: 'primary', value: 1 }] });
   }
   // Bul ve getir: bir değer yazınca (Ör: Ankara) seçilen bilgileri getiren arama tablosu (DÜŞEYARA)
-  lookupTool() {
+  lookupTool(preset) {
     const wb = this.wb;
-    let si = wb.active; let S = this.table(si);
+    let si = preset ? preset.si : wb.active; let S = this.table(si);
     if (!S.cols.length) { const k = wb.sheets.findIndex((_, i) => this.table(i).cols.length); if (k < 0) { U.toast('Önce verisi olan bir tablo gerekir'); return; } si = k; S = this.table(k); }
     let key = (S.cols.find(c => c.kind === 'text' && !c.computed) || S.cols[0]).c;
     let rets = S.cols.filter(c => c.c !== key).map(c => c.c);
     let mode = 'first'; let picks = [];
+    if (preset) { key = preset.key; rets = preset.rets && preset.rets.length ? preset.rets : S.cols.filter(c => c.c !== key).map(c => c.c); picks = preset.picks || []; }
     const body = h('div', { class: 'form m-look' });
     const name = h('input', { class: 'inp' });
     const draw = () => {
@@ -909,6 +960,11 @@ class Modern {
   }
   applyFormula(si, r, c, f, n, nf, hdr) {
     const wb = this.wb;
+    if (this._calcName && this.fnTarget && wb.sheets[si] && wb.sheets[si].name === 'Hesaplar') {
+      const m = /^([A-Z][A-Z0-9.]*)\(/.exec(f); const fd = m && X.FN[m[1]];
+      wb.begin(); wb.patchCell(si, r, 0, { v: (fd ? fd.tr + ' — ' : '') + this._calcName, f: null }); wb.patchCell(si, r, 1, { f, v: null }); if (nf) wb.setStyle(si, r, 1, { nf }); wb.end();
+      this.fnTarget = null; this._calcName = null; wb.active = si; this.view = 'list'; this.msel = null; this.render(); U.toast('✓ Hesaplar tablosuna eklendi: ' + wb.display(si, r, 1)); return;
+    }
     // "işlevlerle kendim kurayım": tek hücre yerine bütün satırlara uygula ve başlık sor
     const cm = this._colMode; this._colMode = null; let askName = false;
     if (cm && cm.c === c && (n || 1) === 1 && !hdr) {

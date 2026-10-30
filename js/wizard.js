@@ -480,7 +480,7 @@ class Wizards {
   }
   openFn(fd, pre) {
     const app = this.app; const wb = this.wb;
-    this.target = { si: wb.active, r: app.sel.r, c: app.sel.c };
+    this.target = app.fnTarget ? app.fnTarget() : { si: wb.active, r: app.sel.r, c: app.sel.c };
     this.table = this.tableInfo(); this.table.cols.forEach(c => c.st = this.colStats(c));
     const body = h('div', { class: 'form' });
     body.append(h('p', { class: 'hint', html: `<b>${fd.tr}</b> <span class="en">(${fd.en})</span> — ${U.esc(fd.desc)}` }));
